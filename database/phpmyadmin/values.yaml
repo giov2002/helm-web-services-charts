@@ -1,0 +1,29 @@
+replicaCount: 2
+image:
+  repository: phpmyadmin/phpmyadmin
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+mysql:
+  host: "mysql"      # DOIT pointer vers le Service MySQL (ex: "mydb")
+  port: 3306
+  # Optionnels (on préfère saisir dans l'UI) :
+  # username: "root"
+  # password: ""
+
+service:
+  type: NodePort
+  port: 80
+  nodePort: 30007  # peut être laissé vide pour allocation auto
+
+resources:
+  limits:
+    memory: 256Mi
+    cpu: 200m
+  requests:
+    memory: 128Mi
+    cpu: 100m
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

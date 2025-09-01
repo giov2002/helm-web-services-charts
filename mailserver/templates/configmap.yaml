@@ -1,0 +1,35 @@
+{{- if .Values.configMap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mail-config
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "mailstack.labels" . | nindent 4 }}
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  # Configuration environment variables pour docker-mailserver
+  OVERRIDE_HOSTNAME: "mail.{{ .Values.global.domain }}"
+  DMS_DEBUG: "0"
+  ENABLE_SPAMASSASSIN: "1"
+  ENABLE_CLAMAV: "1"
+  ENABLE_FAIL2BAN: "0"
+  ENABLE_POSTGREY: "1"
+  ENABLE_DNSBL: "0"
+  ENABLE_AMAVIS: "1"
+  ONE_DIR: "1"
+  ENABLE_POP3: "0"
+  ENABLE_LDAP: "0"
+  ENABLE_SASLAUTHD: "0"
+  ENABLE_MANAGESIEVE: "1"
+  POSTMASTER_ADDRESS: "admin@{{ .Values.global.domain }}"
+  SSL_TYPE: "self-signed"
+  PERMIT_DOCKER: "network"
+  TZ: "Europe/Paris"
+{{- end }}

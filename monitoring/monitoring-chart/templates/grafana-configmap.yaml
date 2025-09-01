@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "monitoring.fullname" . }}-grafana-config
+  labels:
+    {{- include "monitoring.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+data:
+  # Datasources configuration. Cette configuration est lue par Grafana au
+  # démarrage et définit Prometheus comme source de données par défaut.
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://{{ include "monitoring.fullname" . }}-prometheus-service:{{ .Values.prometheus.service.port }}
+        isDefault: true

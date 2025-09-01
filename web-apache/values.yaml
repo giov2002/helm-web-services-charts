@@ -1,0 +1,17 @@
+image:
+  repository: httpd
+  tag: "2.4.47"  # Version de Apache
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  nodePort: 30082  # Port externe exposé
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi

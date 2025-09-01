@@ -1,0 +1,34 @@
+image:
+  repository: mysql
+  tag: "8.0"
+  pullPolicy: IfNotPresent
+
+# ⚠️ DOIT être défini (via --set mysqlRootPassword=...)
+mysqlRootPassword: "MotDePasseFort"
+
+# Optionnels : création auto au démarrage
+mysqlDatabase: ""
+mysqlUser: "root"  # Ajoute l'utilisateur ici
+mysqlPassword: "MotDePasseFort"  # Ajoute le mot de passe ici pour la cohérence
+
+service:
+  type: ClusterIP
+  port: 3306
+
+persistence:
+  enabled: true
+  accessMode: ReadWriteOnce
+  storageClass: "standard"   # "" => StorageClass par défaut de Minikube
+  size: 1Gi
+
+resources:
+  limits:
+    memory: 512Mi
+    cpu: 250m
+  requests:
+    memory: 256Mi
+    cpu: 100m
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bind9.fullname" . }}
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "bind9.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "bind9.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bind9.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: {{ .Chart.Name }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: 53
+          name: dns-udp
+          protocol: UDP
+        - containerPort: 53
+          name: dns-tcp
+          protocol: TCP
+        env:
+        - name: TZ
+          value: "UTC"
+        - name: BIND9_USER
+          value: "bind"
+        volumeMounts:
+        - name: bind9-config
+          mountPath: /etc/bind/named.conf
+          subPath: named.conf
+        {{- range $zoneName, $zoneConfig := .Values.dns.zones }}
+        - name: bind9-config
+          mountPath: /etc/bind/db.{{ $zoneName }}
+          subPath: db.{{ $zoneName }}
+        {{- end }}
+        {{- range $zoneName, $zoneConfig := .Values.dns.reverse_zones }}
+        - name: bind9-config
+          mountPath: /etc/bind/db.{{ $zoneName }}
+          subPath: db.{{ $zoneName }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+      volumes:
+      - name: bind9-config
+        configMap:
+          name: {{ include "bind9.fullname" . }}-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "bind9.fullname" . }}-config
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "bind9.labels" . | nindent 4 }}
+data:
+  named.conf: |
+    options {
+        directory "/var/cache/bind";
+        listen-on { any; };
+        listen-on-v6 { any; };
+        allow-query { any; };
+        allow-recursion { any; };
+        recursion yes;
+        forwarders {
+        {{- range .Values.dns.forwarders }}
+            {{ . }};
+        {{- end }}
+        };
+        dnssec-validation auto;
+    };
+    
+    zone "." {
+        type hint;
+        file "/usr/share/dns/root.hints";
+    };
+    
+    zone "localhost" {
+        type master;
+        file "/etc/bind/db.local";
+    };
+    
+    zone "127.in-addr.arpa" {
+        type master;
+        file "/etc/bind/db.127";
+    };
+    
+    {{- range $zoneName, $zoneConfig := .Values.dns.zones }}
+    zone "{{ $zoneName }}" {
+        type master;
+        file "/etc/bind/db.{{ $zoneName }}";
+    };
+    {{- end }}
+    
+    {{- range $zoneName, $zoneConfig := .Values.dns.reverse_zones }}
+    zone "{{ $zoneName }}" {
+        type master;
+        file "/etc/bind/db.{{ $zoneName }}";
+    };
+    {{- end }}
+
+  {{- range $zoneName, $zoneConfig := .Values.dns.zones }}
+  db.{{ $zoneName }}: |
+    ;
+    ; BIND data file for {{ $zoneName }}
+    ;
+    $TTL    {{ $zoneConfig.ttl }}
+    @       IN      SOA     {{ $zoneConfig.ns }}. {{ $zoneConfig.admin }}. (
+                              {{ $zoneConfig.serial }}         ; Serial
+                         {{ $zoneConfig.ttl }}         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         {{ $zoneConfig.ttl }} )       ; Negative Cache TTL
+    ;
+    @       IN      NS      {{ $zoneConfig.ns }}.
+    {{- range $zoneConfig.records }}
+    {{- if eq .type "A" }}
+    {{ .name }}     IN      A       {{ .value }}
+    {{- else if eq .type "MX" }}
+    {{ .name }}     IN      MX      {{ .priority }}     {{ .value }}
+    {{- else if eq .type "CNAME" }}
+    {{ .name }}     IN      CNAME   {{ .value }}.
+    {{- end }}
+    {{- end }}
+
+  {{- end }}
+
+  {{- range $zoneName, $zoneConfig := .Values.dns.reverse_zones }}
+  db.{{ $zoneName }}: |
+    ;
+    ; BIND reverse data file for {{ $zoneName }}
+    ;
+    $TTL    {{ $zoneConfig.ttl }}
+    @       IN      SOA     {{ $zoneConfig.ns }}. {{ $zoneConfig.admin }}. (
+                              {{ $zoneConfig.serial }}         ; Serial
+                         {{ $zoneConfig.ttl }}         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         {{ $zoneConfig.ttl }} )       ; Negative Cache TTL
+    ;
+    @       IN      NS      {{ $zoneConfig.ns }}.
+    {{- range $zoneConfig.records }}
+    {{ .name }}       IN      PTR     {{ .value }}
+    {{- end }}
+
+  {{- end }}

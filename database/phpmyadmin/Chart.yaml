@@ -1,0 +1,6 @@
+apiVersion: v2
+name: phpmyadmin
+description: Chart Helm minimal pour déployer phpMyAdmin
+type: application
+version: 1.0.0
+appVersion: "5.2.1"

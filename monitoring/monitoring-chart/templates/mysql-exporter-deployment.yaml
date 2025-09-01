@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "monitoring.fullname" . }}-mysql-exporter
+  labels:
+    {{- include "monitoring.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mysql-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "monitoring.fullname" . }}
+      app.kubernetes.io/component: mysql-exporter
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "monitoring.fullname" . }}
+        app.kubernetes.io/component: mysql-exporter
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: mysql-exporter
+          image: "{{ .Values.exporter.image.repository }}:{{ .Values.exporter.image.tag }}"
+          imagePullPolicy: {{ .Values.exporter.image.pullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: 9104
+          env:
+            - name: MYSQL_USER
+              value: "{{ .Values.exporter.mysqlUser }}"
+            - name: MYSQL_PASSWORD
+              value: "{{ .Values.exporter.mysqlPassword }}"
+            - name: MYSQL_HOST
+              value: "{{ .Values.exporter.mysqlHost }}"
+            - name: MYSQL_PORT
+              value: "{{ .Values.exporter.mysqlPort }}"
+            - name: DATA_SOURCE_NAME
+              value: "$(MYSQL_USER):$(MYSQL_PASSWORD)@tcp($(MYSQL_HOST):$(MYSQL_PORT))/"
+          resources:
+            {{- toYaml .Values.exporter.resources | nindent 12 }}

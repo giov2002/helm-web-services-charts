@@ -1,0 +1,49 @@
+# phpmyadmin/templates/deployment.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "phpmyadmin.fullname" . }}
+  labels:
+    {{- include "phpmyadmin.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0  # assure qu'aucun pod ne soit indisponible durant la mise à jour
+      maxSurge: 1        # autorise la création d’un nouveau pod en surplus pendant l’update
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "phpmyadmin.fullname" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "phpmyadmin.fullname" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+      - name: phpmyadmin
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 80
+        env:
+        - name: PMA_HOST
+          value: {{ required "Définissez .Values.mysql.host (ex: --set mysql.host=mydb)" .Values.mysql.host | quote }}
+        - name: PMA_PORT
+          value: "{{ .Values.mysql.port }}"
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

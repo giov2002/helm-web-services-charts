@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "monitoring.fullname" . }}-nginx-exporter
+  labels:
+    app.kubernetes.io/name: nginx-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nginx-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nginx-exporter
+    spec:
+      containers:
+        - name: nginx-exporter
+          image: nginx/nginx-prometheus-exporter:0.11.0
+          ports:
+            - containerPort: 9113
+          args:
+            - "-nginx.scrape-uri=http://web-nginx-web-nginx.web-nginx.svc.cluster.local:8080/nginx_status"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

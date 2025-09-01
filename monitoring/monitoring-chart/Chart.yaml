@@ -1,0 +1,13 @@
+apiVersion: v2
+name: monitoring
+description: >-
+  Chart Helm minimal pour déployer Prometheus, Grafana et un exporter MySQL
+  pour surveiller une base de données MySQL existante dans Kubernetes. Le
+  chart crée trois composants : un exporter MySQL qui expose les métriques
+  de la base de données, une instance Prometheus qui scrute l’exporter et
+  stocke les métriques, et une instance Grafana configurée pour se
+  connecter à Prometheus et visualiser ces métriques. Ce chart est conçu
+  pour être léger, facilement configurable et réversible à l’aide de Helm.
+type: application
+version: 1.0.0
+appVersion: "1.0"

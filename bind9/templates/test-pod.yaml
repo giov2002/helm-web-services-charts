@@ -1,0 +1,18 @@
+{{- if .Values.testPod.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "bind9.fullname" . }}-test-client
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "bind9.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test-client
+spec:
+  containers:
+  - name: dns-client
+    image: {{ .Values.testPod.image }}
+    command: ["/bin/sh"]
+    args: ["-c", "apk add --no-cache bind-tools && sleep 3600"]
+    tty: true
+    stdin: true
+{{- end }}

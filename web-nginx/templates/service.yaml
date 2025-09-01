@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "web-nginx.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "web-nginx.name" . }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "web-nginx.name" . }}
+  ports:
+    - protocol: TCP
+      port: 8080    # Le port exposé dans le cluster
+      targetPort: 80 # Le port sur lequel nginx écoute à l'intérieur du conteneur
+      nodePort: 30080 # Port externe exposé sur chaque nœud (modifiable à ton choix)
+  type: NodePort

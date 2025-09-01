@@ -1,0 +1,144 @@
+{{- if .Values.mailserver.enabled }}
+{{- if .Values.mailserver.persistence.mailData.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mail-data
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "mailstack.mailserver.labels" . | nindent 4 }}
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.mailserver.persistence.mailData.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.mailserver.persistence.mailData.size }}
+  {{- if .Values.mailserver.persistence.mailData.storageClass }}
+  storageClassName: {{ .Values.mailserver.persistence.mailData.storageClass }}
+  {{- end }}
+{{- end }}
+
+{{- if .Values.mailserver.persistence.mailState.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mail-state
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "mailstack.mailserver.labels" . | nindent 4 }}
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.mailserver.persistence.mailState.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.mailserver.persistence.mailState.size }}
+  {{- if .Values.mailserver.persistence.mailState.storageClass }}
+  storageClassName: {{ .Values.mailserver.persistence.mailState.storageClass }}
+  {{- end }}
+{{- end }}
+
+{{- if .Values.mailserver.persistence.mailLogs.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mail-logs
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "mailstack.mailserver.labels" . | nindent 4 }}
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.mailserver.persistence.mailLogs.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.mailserver.persistence.mailLogs.size }}
+  {{- if .Values.mailserver.persistence.mailLogs.storageClass }}
+  storageClassName: {{ .Values.mailserver.persistence.mailLogs.storageClass }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{- if .Values.roundcube.enabled }}
+{{- if .Values.roundcube.instance1.enabled }}
+{{- if .Values.roundcube.instance1.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.roundcube.instance1.name }}-data
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "mailstack.roundcube.labels" . | nindent 4 }}
+    app: {{ .Values.roundcube.instance1.name }}
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.roundcube.instance1.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.roundcube.instance1.persistence.size }}
+  {{- if .Values.roundcube.instance1.persistence.storageClass }}
+  storageClassName: {{ .Values.roundcube.instance1.persistence.storageClass }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{- if .Values.roundcube.instance2.enabled }}
+{{- if .Values.roundcube.instance2.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.roundcube.instance2.name }}-data
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "mailstack.roundcube.labels" . | nindent 4 }}
+    app: {{ .Values.roundcube.instance2.name }}
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.roundcube.instance2.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.roundcube.instance2.persistence.size }}
+  {{- if .Values.roundcube.instance2.persistence.storageClass }}
+  storageClassName: {{ .Values.roundcube.instance2.persistence.storageClass }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
