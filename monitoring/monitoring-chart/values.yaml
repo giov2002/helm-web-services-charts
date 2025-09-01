@@ -56,3 +56,9 @@ grafana:
     requests:
       cpu: 150m
       memory: 128Mi
+
+nginx:
+  service:
+    name: my-nginx-web-nginx
+    namespace: web-nginx
+    port: 8080

@@ -20,7 +20,7 @@ spec:
           ports:
             - containerPort: 9113
           args:
-            - "-nginx.scrape-uri=http://web-nginx-web-nginx.web-nginx.svc.cluster.local:8080/nginx_status"
+            - "-nginx.scrape-uri=http://{{ .Values.nginx.service.name }}.{{ .Values.nginx.service.namespace }}.svc.cluster.local:{{ .Values.nginx.service.port }}/nginx_status"
           resources:
             requests:
               cpu: 50m

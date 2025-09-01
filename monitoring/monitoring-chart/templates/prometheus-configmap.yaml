@@ -22,3 +22,7 @@ data:
         static_configs:
           - targets:
             - '{{ include "monitoring.fullname" . }}-nginx-exporter:9113'
+      - job_name: 'bind9-exporter'
+        static_configs:
+          - targets: ['bind9-exporter:9119']
+

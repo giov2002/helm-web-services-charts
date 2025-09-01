@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bind9-exporter
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app: bind9-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bind9-exporter
+  template:
+    metadata:
+      labels:
+        app: bind9-exporter
+    spec:
+      containers:
+      - name: bind9-exporter
+        image: prom/bind-exporter:latest
+        ports:
+        - containerPort: 9119
+        env:
+        - name: BIND9_HOST
+          value: "localhost"
+        - name: BIND9_PORT
+          value: "53"
