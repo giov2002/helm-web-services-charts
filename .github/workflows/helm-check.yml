@@ -1,26 +1,26 @@
-name: 🚀 CI/CD Infrastructure Services
+name: 🚀 CI Infrastructure Services
 
 on:
   push:
     branches: [ main, develop ]
     paths:
-      - 'web-nginx/**'
-      - 'monitoring/**'
-      - 'web-apache/**'
       - 'bind9/**'
       - 'database/**'
       - 'mailserver/**'
+      - 'monitoring/**'
       - 'roundcube/**'
+      - 'web-apache/**'
+      - 'web-nginx/**'
   pull_request:
     branches: [ main ]
     paths:
-      - 'web-nginx/**'
-      - 'monitoring/**'
-      - 'web-apache/**'
       - 'bind9/**'
       - 'database/**'
       - 'mailserver/**'
+      - 'monitoring/**'
       - 'roundcube/**'
+      - 'web-apache/**'
+      - 'web-nginx/**'
 
 env:
   REGISTRY: ghcr.io
@@ -43,307 +43,283 @@ jobs:
       web-nginx: ${{ steps.changes.outputs.web-nginx }}
     
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: 🔍 Détecter les changements par service
-      id: changes
-      run: |
-        charts_changed=""
-        
-        # Fonction pour détecter les changements
-        check_changes() {
-          local service=$1
-          local path=$2
-          if git diff --name-only HEAD~1 | grep -q "^${path}/"; then
-            echo "${service}=true" >> $GITHUB_OUTPUT
-            charts_changed="${charts_changed},${service}"
-            echo "✅ Changements détectés dans: $service"
+      - name: 🔍 Détecter les changements par service
+        id: changes
+        run: |
+          declare -A services=(
+            [bind9]="bind9"
+            [mysql]="database/mysql"
+            [phpmyadmin]="database/phpmyadmin"
+            [mailserver]="mailserver"
+            [monitoring]="monitoring/monitoring-chart"
+            [roundcube]="roundcube"
+            [web-apache]="web-apache"
+            [web-nginx]="web-nginx"
+          )
+
+          charts_changed=()
+
+          # Utiliser une comparaison adaptée aux PR et push
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch origin ${{ github.base_ref }}:${{ github.base_ref }}
+            diff_base="${{ github.base_ref }}"
           else
-            echo "${service}=false" >> $GITHUB_OUTPUT
-            echo "⏸️ Aucun changement dans: $service"
+            diff_base="HEAD~1"
           fi
-        }
-        
-        # Vérification par service
-        check_changes "bind9" "bind9"
-        check_changes "mysql" "database/mysql"
-        check_changes "phpmyadmin" "database/phpmyadmin"
-        check_changes "mailserver" "mailserver"
-        check_changes "monitoring" "monitoring"
-        check_changes "roundcube" "roundcube"
-        check_changes "web-apache" "web-apache"
-        check_changes "web-nginx" "web-nginx"
-        
-        # Nettoyer la liste
-        charts_changed=$(echo "$charts_changed" | sed 's/^,//')
-        echo "charts=${charts_changed}" >> $GITHUB_OUTPUT
-        echo "📋 Services à déployer: $charts_changed"
+
+          for svc in "${!services[@]}"; do
+            path="${services[$svc]}"
+            if git diff --name-only "$diff_base" | grep -q "^${path}/"; then
+              echo "$svc=true" >> $GITHUB_OUTPUT
+              charts_changed+=("$svc")
+              echo "✅ Changements détectés dans: $svc"
+            else
+              echo "$svc=false" >> $GITHUB_OUTPUT
+              echo "⏸️ Aucun changement dans: $svc"
+            fi
+          done
+
+          # Exporter la liste JSON pour matrice
+          charts_json=$(printf '%s\n' "${charts_changed[@]}" | jq -R -s -c 'split("\n")[:-1]')
+          echo "charts=${charts_json}" >> $GITHUB_OUTPUT
+          echo "📋 Services à déployer: ${charts_changed[*]}"
 
   # Job 2: Validation des charts modifiés
   validate-charts:
     name: 🧪 Validation des Charts
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.charts != '' }}  # Vérifie que la liste des charts n'est pas vide
+    if: ${{ needs.detect-changes.outputs.charts != '[]' }}
     strategy:
       matrix:
-        chart: ${{ fromJson('["' + needs.detect-changes.outputs.charts.replace(',', '","') + '"]') }}  # Correction du format JSON
+        chart: ${{ fromJson(needs.detect-changes.outputs.charts) }}
       fail-fast: false
-    
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: ⚙️ Setup Helm
-      uses: azure/setup-helm@v3
-      with:
-        version: '3.12.0'
+      - name: ⚙️ Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.12.0'
 
-    - name: 🔍 Validation du chart ${{ matrix.chart }}
-      run: |
-        chart_path=""
-        case "${{ matrix.chart }}" in
-          "mysql") chart_path="database/mysql" ;;
-          "phpmyadmin") chart_path="database/phpmyadmin" ;;
-          "monitoring") chart_path="monitoring/monitoring-chart" ;;
-          *) chart_path="${{ matrix.chart }}" ;;
-        esac
-        
-        echo "🔍 Validation de: $chart_path"
-        helm lint $chart_path/
-        helm template test-${{ matrix.chart }} $chart_path/ --dry-run
-        echo "✅ ${{ matrix.chart }} validé"
+      - name: 🔍 Validation du chart ${{ matrix.chart }}
+        run: |
+          declare -A paths=(
+            [mysql]="database/mysql"
+            [phpmyadmin]="database/phpmyadmin"
+            [monitoring]="monitoring/monitoring-chart"
+            [bind9]="bind9"
+            [mailserver]="mailserver"
+            [roundcube]="roundcube"
+            [web-apache]="web-apache"
+            [web-nginx]="web-nginx"
+          )
 
-  # Job 3: Tests d'intégration avec ordre de déploiement
-  integration-tests:
-    name: 🔄 Tests d'Intégration
+          chart_path="${paths[${{ matrix.chart }}]}"
+          echo "🔍 Validation de: $chart_path"
+          helm lint "$chart_path" --strict
+          helm template "test-${{ matrix.chart }}" "$chart_path" --dry-run
+          echo "✅ ${{ matrix.chart }} validé"
+
+  # Job 3: Lint YAML et Kubernetes (Ajout pour CI renforcée)
+  lint-yaml-k8s:
+    name: 📏 Lint YAML & K8s
     runs-on: ubuntu-latest
-    needs: [detect-changes, validate-charts]
-    if: ${{ needs.detect-changes.outputs.charts != '' }}  # Vérifie que des changements existent avant de lancer ce job
-    
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.charts != '[]' }}
+    strategy:
+      matrix:
+        chart: ${{ fromJson(needs.detect-changes.outputs.charts) }}
+      fail-fast: false
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: ⚙️ Setup Tools
-      run: |
-        # Helm
-        curl https://get.helm.sh/helm-v3.12.0-linux-amd64.tar.gz | tar xz
-        sudo mv linux-amd64/helm /usr/local/bin/
-        
-        # kubectl
-        curl -LO "https://dl.k8s.io/release/v1.28.0/bin/linux/amd64/kubectl"
-        chmod +x kubectl
-        sudo mv kubectl /usr/local/bin/
+      - name: ⚙️ Setup yamllint
+        run: sudo apt-get update && sudo apt-get install -y yamllint
 
-    - name: 🐳 Démarrer Minikube (similaire à votre env)
-      uses: medyagh/setup-minikube@master
-      with:
-        minikube-version: 1.32.0
-        kubernetes-version: 1.28.0
-        driver: docker
-        start-args: '--memory=4096 --cpus=2'
+      - name: ⚙️ Setup kube-linter
+        run: |
+          curl -L https://github.com/stackrox/kube-linter/releases/download/v0.6.4/kube-linter-linux-amd64.tar.gz | tar xz
+          sudo mv kube-linter /usr/local/bin/
 
-    - name: 🗄️ Déployer les dépendances (Base de données)
-      if: ${{ needs.detect-changes.outputs.mysql == 'true' || contains(needs.detect-changes.outputs.charts, 'mailserver') || contains(needs.detect-changes.outputs.charts, 'roundcube') }}
-      run: |
-        echo "🗄️ Déploiement MySQL (prérequis)"
-        kubectl create namespace database || true
-        helm upgrade --install mysql database/mysql/ \
-          --namespace database \
-          --wait --timeout=300s \
-          --set mysql.auth.rootPassword=testpass123
-        
-        # Attendre que MySQL soit complètement prêt
-        kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=mysql -n database --timeout=300s
-        echo "✅ MySQL opérationnel"
+      - name: 📏 Lint YAML pour ${{ matrix.chart }}
+        run: |
+          declare -A paths=(
+            [mysql]="database/mysql"
+            [phpmyadmin]="database/phpmyadmin"
+            [monitoring]="monitoring/monitoring-chart"
+            [bind9]="bind9"
+            [mailserver]="mailserver"
+            [roundcube]="roundcube"
+            [web-apache]="web-apache"
+            [web-nginx]="web-nginx"
+          )
 
-    - name: 🌐 Déployer les services DNS (Bind9)
-      if: ${{ needs.detect-changes.outputs.bind9 == 'true' }}
-      run: |
-        echo "🌐 Déploiement Bind9"
-        kubectl create namespace dns || true
-        helm upgrade --install bind9 bind9/ \
-          --namespace dns \
-          --wait --timeout=180s
-        echo "✅ Bind9 déployé"
+          chart_path="${paths[${{ matrix.chart }}]}"
+          echo "📏 Lint YAML dans: $chart_path"
+          find "$chart_path" -name "*.yaml" -exec yamllint {} \;
+          echo "✅ YAML lint passé"
 
-    - name: 🌍 Déployer les services Web
-      if: ${{ needs.detect-changes.outputs.web-nginx == 'true' || needs.detect-changes.outputs.web-apache == 'true' }}
-      run: |
-        kubectl create namespace web || true
-        
-        if [[ "${{ needs.detect-changes.outputs.web-nginx }}" == "true" ]]; then
-          echo "🌍 Déploiement Nginx"
-          helm upgrade --install nginx web-nginx/ \
-            --namespace web \
-            --wait --timeout=180s
-        fi
-        
-        if [[ "${{ needs.detect-changes.outputs.web-apache }}" == "true" ]]; then
-          echo "🌍 Déploiement Apache"
-          helm upgrade --install apache web-apache/ \
-            --namespace web \
-            --wait --timeout=180s
-        fi
-        echo "✅ Services web déployés"
+      - name: 🔒 Lint Kubernetes pour ${{ matrix.chart }}
+        run: |
+          declare -A paths=(
+            [mysql]="database/mysql"
+            [phpmyadmin]="database/phpmyadmin"
+            [monitoring]="monitoring/monitoring-chart"
+            [bind9]="bind9"
+            [mailserver]="mailserver"
+            [roundcube]="roundcube"
+            [web-apache]="web-apache"
+            [web-nginx]="web-nginx"
+          )
 
-    - name: 📧 Déployer les services Mail
-      if: ${{ needs.detect-changes.outputs.mailserver == 'true' || needs.detect-changes.outputs.roundcube == 'true' }}
-      run: |
-        kubectl create namespace mail || true
-        
-        if [[ "${{ needs.detect-changes.outputs.mailserver }}" == "true" ]]; then
-          echo "📧 Déploiement Mailserver"
-          helm upgrade --install mailserver mailserver/ \
-            --namespace mail \
-            --wait --timeout=300s
-        fi
-        
-        if [[ "${{ needs.detect-changes.outputs.roundcube }}" == "true" ]]; then
-          echo "📧 Déploiement Roundcube"
-          helm upgrade --install roundcube roundcube/ \
-            --namespace mail \
-            --wait --timeout=180s
-        fi
-        echo "✅ Services mail déployés"
+          chart_path="${paths[${{ matrix.chart }}]}"
+          echo "🔒 Lint K8s dans: $chart_path"
+          helm template "test-${{ matrix.chart }}" "$chart_path" | kube-linter lint -
+          echo "✅ K8s lint passé"
 
-    - name: 📊 Déployer le Monitoring
-      if: ${{ needs.detect-changes.outputs.monitoring == 'true' }}
-      run: |
-        echo "📊 Déploiement du Monitoring"
-        kubectl create namespace monitoring || true
-        helm upgrade --install monitoring monitoring/monitoring-chart/ \
-          --namespace monitoring \
-          --wait --timeout=300s
-        echo "✅ Monitoring déployé"
-
-    - name: 🔍 Tests de Connectivité Inter-Services
-      run: |
-        echo "🔍 Vérification de la connectivité"
-        
-        # Test MySQL (si présent)
-        if kubectl get pods -n database -l app.kubernetes.io/name=mysql &>/dev/null; then
-          kubectl run mysql-test --rm -i --restart=Never --image=mysql:8.0 -- \
-            mysqladmin ping -h mysql.database.svc.cluster.local -u root -ptestpass123 || \
-            echo "⚠️ MySQL non accessible"
-        fi
-        
-        # Test services web
-        for service in nginx apache; do
-          if kubectl get svc -n web $service &>/dev/null; then
-            kubectl run web-test-$service --rm -i --restart=Never --image=curlimages/curl -- \
-              curl -I http://$service.web.svc.cluster.local/ || \
-              echo "⚠️ $service non accessible"
-          fi
-        done
-        
-        echo "✅ Tests de connectivité terminés"
-
-    - name: 📋 Résumé du déploiement
-      run: |
-        echo "📋 === RÉSUMÉ DU DÉPLOIEMENT ==="
-        echo "Namespaces créés:"
-        kubectl get namespaces | grep -E "(database|web|mail|monitoring|dns)" || true
-        echo ""
-        echo "Services déployés:"
-        kubectl get pods --all-namespaces | grep -v "kube-system\|default" || true
-        echo ""
-        echo "Services réseau:"
-        kubectl get svc --all-namespaces | grep -v "kube-system\|default" || true
-
-  # Job 4: Tests de Sécurité et Performance
-  security-performance-tests:
-    name: 🔒 Sécurité & Performance
+  # Job 4: Audit de Sécurité (Simplifié pour CI, sans déploiement)
+  security-audit:
+    name: 🔒 Audit de Sécurité
     runs-on: ubuntu-latest
-    needs: [detect-changes, validate-charts]
-    if: ${{ needs.detect-changes.outputs.charts != '' }}
-    
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.charts != '[]' }}
+    strategy:
+      matrix:
+        chart: ${{ fromJson(needs.detect-changes.outputs.charts) }}
+      fail-fast: false
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: ⚙️ Setup Helm
-      uses: azure/setup-helm@v3
+      - name: ⚙️ Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.12.0'
 
-    - name: 🔒 Audit de Sécurité
-      run: |
-        echo "🔒 Audit de sécurité des configurations"
-        
-        # Vérification des secrets
-        echo "🔍 Vérification des secrets..."
-        for chart in bind9 database/mysql database/phpmyadmin mailserver monitoring/monitoring-chart roundcube web-apache web-nginx; do
-          if [ -d "$chart" ]; then
-            # Recherche de mots de passe en dur
-            if grep -r "password.*:" "$chart/" --include="*.yaml" | grep -v "passwordSecretRef" | grep -v "# Example" | grep -v "description"; then
-              echo "⚠️ $chart: Mots de passe potentiellement en dur"
-            else
-              echo "✅ $chart: Secrets correctement gérés"
-            fi
+      - name: 🔒 Vérification des secrets et ressources pour ${{ matrix.chart }}
+        run: |
+          declare -A paths=(
+            [mysql]="database/mysql"
+            [phpmyadmin]="database/phpmyadmin"
+            [monitoring]="monitoring/monitoring-chart"
+            [bind9]="bind9"
+            [mailserver]="mailserver"
+            [roundcube]="roundcube"
+            [web-apache]="web-apache"
+            [web-nginx]="web-nginx"
+          )
+
+          chart_path="${paths[${{ matrix.chart }}]}"
+          echo "🔒 Audit de: $chart_path"
+
+          # Vérification des mots de passe en dur
+          if grep -rE "password.*:.*[a-zA-Z0-9]" "$chart_path/" --include="*.yaml" --exclude="*.tpl" | grep -v "passwordSecretRef" | grep -v "#"; then
+            echo "⚠️ Mots de passe potentiellement en dur détectés"
+            exit 1
+          else
+            echo "✅ Pas de mots de passe en dur"
           fi
-        done
-        
-        # Vérification des ressources
-        echo "🔍 Vérification des limites de ressources..."
-        for chart in bind9 database/mysql database/phpmyadmin mailserver monitoring/monitoring-chart roundcube web-apache web-nginx; do
-          if [ -d "$chart" ]; then
-            if helm template test "$chart/" | grep -q "resources:"; then
-              echo "✅ $chart: Limites de ressources définies"
-            else
-              echo "⚠️ $chart: Limites de ressources recommandées"
-            fi
-          fi
-        done
 
-    - name: 🛡️ Scan des vulnérabilités
-      run: |
-        echo "🛡️ Analyse des vulnérabilités des images"
-        
-        # Extraire les images des templates
-        for chart in bind9 database/mysql database/phpmyadmin mailserver monitoring/monitoring-chart roundcube web-apache web-nginx; do
-          if [ -d "$chart" ]; then
-            echo "🔍 Images dans $chart:"
-            helm template test "$chart/" | grep "image:" | sort | uniq || true
+          # Vérification des limites de ressources
+          if helm template "test-${{ matrix.chart }}" "$chart_path" | grep -q "resources:"; then
+            echo "✅ Limites de ressources définies"
+          else
+            echo "⚠️ Limites de ressources manquantes"
+            exit 1
           fi
-        done
 
-  # Job 5: Notification et Documentation
+  # Job 5: Package Charts (Ajout pour CI : Packaging pour futur déploiement)
+  package-charts:
+    name: 📦 Package des Charts
+    runs-on: ubuntu-latest
+    needs: [validate-charts, lint-yaml-k8s, security-audit]
+    if: ${{ needs.detect-changes.outputs.charts != '[]' && github.ref == 'refs/heads/main' }}  # Seulement sur main pour simuler une release CI
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.12.0'
+
+      - name: 📦 Package les charts modifiés
+        run: |
+          declare -A paths=(
+            [mysql]="database/mysql"
+            [phpmyadmin]="database/phpmyadmin"
+            [monitoring]="monitoring/monitoring-chart"
+            [bind9]="bind9"
+            [mailserver]="mailserver"
+            [roundcube]="roundcube"
+            [web-apache]="web-apache"
+            [web-nginx]="web-nginx"
+          )
+
+          for chart in $(echo ${{ needs.detect-changes.outputs.charts }} | jq -r '.[]'); do
+            chart_path="${paths[$chart]}"
+            helm package "$chart_path" --destination artifacts/
+            echo "📦 $chart packagé"
+          done
+
+      - name: 📤 Upload Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: helm-charts
+          path: artifacts/*.tgz
+
+  # Job 6: Notification (Simplifiée pour CI)
   notification:
     name: 📢 Notification
     runs-on: ubuntu-latest
-    needs: [integration-tests, security-performance-tests]
+    needs: [validate-charts, lint-yaml-k8s, security-audit, package-charts]
     if: always()
-    
     steps:
-    - name: 📊 Préparer le rapport
-      run: |
-        echo "📊 === RAPPORT DE DÉPLOIEMENT ===" > deployment_report.md
-        echo "Date: $(date)" >> deployment_report.md
-        echo "Branch: ${{ github.ref }}" >> deployment_report.md
-        echo "Commit: ${{ github.sha }}" >> deployment_report.md
-        echo "" >> deployment_report.md
-        
-        if [[ "${{ needs.integration-tests.result }}" == "success" ]]; then
-          echo "✅ Tests d'intégration: SUCCÈS" >> deployment_report.md
-        else
-          echo "❌ Tests d'intégration: ÉCHEC" >> deployment_report.md
-        fi
-        
-        if [[ "${{ needs.security-performance-tests.result }}" == "success" ]]; then
-          echo "✅ Tests de sécurité: SUCCÈS" >> deployment_report.md
-        else
-          echo "❌ Tests de sécurité: ÉCHEC" >> deployment_report.md
-        fi
-        
-        echo "" >> deployment_report.md
-        echo "🚀 Déploiement prêt pour la production!" >> deployment_report.md
-        
-        cat deployment_report.md
+      - name: 📊 Préparer le rapport
+        run: |
+          echo "📊 === RAPPORT CI ===" > ci_report.md
+          echo "Date: $(date)" >> ci_report.md
+          echo "Branch: ${{ github.ref }}" >> ci_report.md
+          echo "Commit: ${{ github.sha }}" >> ci_report.md
+          echo "" >> ci_report.md
+          
+          if [[ "${{ needs.validate-charts.result }}" == "success" ]]; then
+            echo "✅ Validation Charts: SUCCÈS" >> ci_report.md
+          else
+            echo "❌ Validation Charts: ÉCHEC" >> ci_report.md
+          fi
+          
+          if [[ "${{ needs.lint-yaml-k8s.result }}" == "success" ]]; then
+            echo "✅ Lint YAML/K8s: SUCCÈS" >> ci_report.md
+          else
+            echo "❌ Lint YAML/K8s: ÉCHEC" >> ci_report.md
+          fi
+          
+          if [[ "${{ needs.security-audit.result }}" == "success" ]]; then
+            echo "✅ Audit Sécurité: SUCCÈS" >> ci_report.md
+          else
+            echo "❌ Audit Sécurité: ÉCHEC" >> ci_report.md
+          fi
+          
+          if [[ "${{ needs.package-charts.result }}" == "success" ]]; then
+            echo "✅ Packaging: SUCCÈS" >> ci_report.md
+          else
+            echo "❌ Packaging: ÉCHEC (ou non lancé)" >> ci_report.md
+          fi
+          
+          echo "" >> ci_report.md
+          echo "🚀 CI terminé - Prêt pour revue!" >> ci_report.md
+          
+          cat ci_report.md
 
-    - name: 📢 Résultat final
-      run: |
-        if [[ "${{ needs.integration-tests.result }}" == "success" && "${{ needs.security-performance-tests.result }}" == "success" ]]; then
-          echo "🎉 SUCCÈS: Tous les tests sont passés - Prêt pour le déploiement en production!"
-          echo "🔄 Les services peuvent être mis à jour sans interruption"
-        else
-          echo "❌ ÉCHEC: Certains tests ont échoué - Révision nécessaire avant déploiement"
-          exit 1
+      - name: 📢 Résultat final
+        run: |
+          if [[ "${{ needs.validate-charts.result }}" == "success" && "${{ needs.lint-yaml-k8s.result }}" == "success" && "${{ needs.security-audit.result }}" == "success" ]]; then
+            echo "🎉 SUCCÈS: Tous les checks CI sont passés!"
+          else
+            echo "❌ ÉCHEC: Certains checks ont échoué - Révision nécessaire"
+            exit 1
+          fi
