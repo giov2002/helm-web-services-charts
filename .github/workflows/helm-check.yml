@@ -1,13 +1,26 @@
 name: 🔍 Vérification des Charts Helm
 
-# Se déclenche uniquement lorsque des modifications sont effectuées dans le répertoire charts/
+# Se déclenche uniquement lorsque des modifications sont effectuées dans un sous-dossier spécifique d'un chart
 on:
   push:
     paths:
-      - 'charts/**'  # Se déclenche uniquement si quelque chose change dans le dossier charts/
+      - 'web-nginx/**'  # Se déclenche uniquement si quelque chose change dans le dossier web-nginx/
+      - 'monitoring/**'  # Se déclenche uniquement si quelque chose change dans le dossier monitoring/
+      - 'web-apache/**'  # Se déclenche uniquement si quelque chose change dans le dossier web-apache/
+      - 'bind9/**'  # Se déclenche uniquement si quelque chose change dans le dossier bind9/
+      - 'database/**'  # Se déclenche uniquement si quelque chose change dans le dossier database/
+      - 'mailserver/**'  # Se déclenche uniquement si quelque chose change dans le dossier mailserver/
+      - 'roundcube/**'  # Se déclenche uniquement si quelque chose change dans le dossier roundcube/
+
   pull_request:
     paths:
-      - 'charts/**'
+      - 'web-nginx/**'
+      - 'monitoring/**'
+      - 'web-apache/**'
+      - 'bind9/**'
+      - 'database/**'
+      - 'mailserver/**'
+      - 'roundcube/**'
 
 jobs:
   check-helm-charts:
@@ -30,26 +43,26 @@ jobs:
       run: |
         echo "=== Vérification du chart web-nginx ==="
         echo "📁 Fichiers dans le chart :"
-        ls -la charts/web-nginx/
+        ls -la web-nginx/
         
         echo "🔍 Lint du chart (recherche d'erreurs) :"
-        helm lint charts/web-nginx/
+        helm lint web-nginx/
         
         echo "🧪 Test de génération des templates :"
-        helm template test-nginx charts/web-nginx/ --dry-run
+        helm template test-nginx web-nginx/ --dry-run
 
     # 4️⃣ Vérifier le chart monitoring
     - name: 🔍 Vérifier le chart monitoring
       run: |
         echo "=== Vérification du chart monitoring ==="
         echo "📁 Fichiers dans le chart :"
-        ls -la charts/monitoring/monitoring-chart/
+        ls -la monitoring/monitoring-chart/
         
         echo "🔍 Lint du chart (recherche d'erreurs) :"
-        helm lint charts/monitoring/monitoring-chart/
+        helm lint monitoring/monitoring-chart/
         
         echo "🧪 Test de génération des templates :"
-        helm template test-monitoring charts/monitoring/monitoring-chart/ --dry-run
+        helm template test-monitoring monitoring/monitoring-chart/ --dry-run
 
     # 5️⃣ Résumé final
     - name: ✅ Résumé
