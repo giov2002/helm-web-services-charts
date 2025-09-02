@@ -49,7 +49,9 @@ jobs:
             fi
           done
 
-          # Construit un JSON propre et supprime les éléments vides
+          # Debug: Afficher ce qui est renvoyé
+          echo "Charts modifiés : ${{ steps.set-changes.outputs.charts }}"
+          
           json=$(
             printf '%s\n' "${modified[@]}" \
             | jq -R -s -c 'split("\n") | map(select(length>0))'
@@ -62,7 +64,7 @@ jobs:
     name: 🧪 Validation Helm Charts
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.charts != '[]' }}
+    if: ${{ needs.detect-changes.outputs.charts != '[]' || true }} # Ajout de || true pour éviter le "skipped"
     strategy:
       matrix:
         chart: ${{ fromJson(needs.detect-changes.outputs.charts) }}
