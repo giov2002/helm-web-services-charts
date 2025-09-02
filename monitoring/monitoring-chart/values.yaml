@@ -62,3 +62,24 @@ nginx:
     name: my-nginx-web-nginx
     namespace: web-nginx
     port: 8080
+
+
+# Configuration de bind9-exporter
+bind9:
+  image:
+    repository: ubuntu/bind9
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  # Hôte et port du service Bind9 à surveiller
+  bind9Host: "localhost"  # Adresse du serveur Bind9
+  bind9Port: 53           # Port de Bind9
+  service:
+    type: ClusterIP
+    port: 9119             # Port où les métriques sont exposées
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 100m
+      memory: 64Mi

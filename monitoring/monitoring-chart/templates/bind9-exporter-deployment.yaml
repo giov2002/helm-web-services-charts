@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: bind9-exporter
-  namespace: {{ .Values.namespace.name }}
+  namespace: {{ .Release.Namespace }}
   labels:
     app: bind9-exporter
 spec:
@@ -17,11 +17,18 @@ spec:
     spec:
       containers:
       - name: bind9-exporter
-        image: prom/bind-exporter:latest
+        image: "{{ .Values.bind9.image.repository }}:{{ .Values.bind9.image.tag }}"
         ports:
-        - containerPort: 9119
+        - containerPort: {{ .Values.bind9.service.port }}
         env:
         - name: BIND9_HOST
-          value: "localhost"
+          value: "{{ .Values.bind9.bind9Host }}"
         - name: BIND9_PORT
-          value: "53"
+          value: "{{ .Values.bind9.bind9Port }}"
+        resources:
+          limits:
+            cpu: {{ .Values.bind9.resources.limits.cpu }}
+            memory: {{ .Values.bind9.resources.limits.memory }}
+          requests:
+            cpu: {{ .Values.bind9.resources.requests.cpu }}
+            memory: {{ .Values.bind9.resources.requests.memory }}
