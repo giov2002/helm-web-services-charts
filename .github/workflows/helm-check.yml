@@ -63,7 +63,7 @@ jobs:
 
           charts_changed=()
 
-          # Utiliser une comparaison adaptée aux PR et push
+          # Gestion des diffs pour push/PR
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             git fetch origin ${{ github.base_ref }}:${{ github.base_ref }}
             diff_base="${{ github.base_ref }}"
@@ -125,7 +125,7 @@ jobs:
           helm template "test-${{ matrix.chart }}" "$chart_path" --dry-run
           echo "✅ ${{ matrix.chart }} validé"
 
-  # Job 3: Lint YAML et Kubernetes (Ajout pour CI renforcée)
+  # Job 3: Lint YAML et Kubernetes
   lint-yaml-k8s:
     name: 📏 Lint YAML & K8s
     runs-on: ubuntu-latest
@@ -141,10 +141,12 @@ jobs:
       - name: ⚙️ Setup yamllint
         run: sudo apt-get update && sudo apt-get install -y yamllint
 
-      - name: ⚙️ Setup kube-linter
+      - name: ⚙️ Setup kube-linter (version latest)
         run: |
-          curl -L https://github.com/stackrox/kube-linter/releases/download/v0.6.4/kube-linter-linux-amd64.tar.gz | tar xz
-          sudo mv kube-linter /usr/local/bin/
+          curl -LO https://github.com/stackrox/kube-linter/releases/download/v0.7.5/kube-linter-linux
+          chmod +x kube-linter-linux
+          sudo mv kube-linter-linux /usr/local/bin/kube-linter
+          kube-linter version  # Vérification
 
       - name: 📏 Lint YAML pour ${{ matrix.chart }}
         run: |
@@ -161,7 +163,11 @@ jobs:
 
           chart_path="${paths[${{ matrix.chart }}]}"
           echo "📏 Lint YAML dans: $chart_path"
-          find "$chart_path" -name "*.yaml" -exec yamllint {} \;
+          if find "$chart_path" -name "*.yaml" | grep -q .; then
+            find "$chart_path" -name "*.yaml" -exec yamllint {} \;
+          else
+            echo "⚠️ Aucun fichier YAML trouvé – skip"
+          fi
           echo "✅ YAML lint passé"
 
       - name: 🔒 Lint Kubernetes pour ${{ matrix.chart }}
@@ -182,7 +188,7 @@ jobs:
           helm template "test-${{ matrix.chart }}" "$chart_path" | kube-linter lint -
           echo "✅ K8s lint passé"
 
-  # Job 4: Audit de Sécurité (Simplifié pour CI, sans déploiement)
+  # Job 4: Audit de Sécurité
   security-audit:
     name: 🔒 Audit de Sécurité
     runs-on: ubuntu-latest
@@ -232,12 +238,12 @@ jobs:
             exit 1
           fi
 
-  # Job 5: Package Charts (Ajout pour CI : Packaging pour futur déploiement)
+  # Job 5: Package Charts
   package-charts:
     name: 📦 Package des Charts
     runs-on: ubuntu-latest
     needs: [validate-charts, lint-yaml-k8s, security-audit]
-    if: ${{ needs.detect-changes.outputs.charts != '[]' && github.ref == 'refs/heads/main' }}  # Seulement sur main pour simuler une release CI
+    if: ${{ needs.detect-changes.outputs.charts != '[]' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -259,6 +265,7 @@ jobs:
             [web-nginx]="web-nginx"
           )
 
+          mkdir -p artifacts
           for chart in $(echo ${{ needs.detect-changes.outputs.charts }} | jq -r '.[]'); do
             chart_path="${paths[$chart]}"
             helm package "$chart_path" --destination artifacts/
@@ -271,7 +278,7 @@ jobs:
           name: helm-charts
           path: artifacts/*.tgz
 
-  # Job 6: Notification (Simplifiée pour CI)
+  # Job 6: Notification
   notification:
     name: 📢 Notification
     runs-on: ubuntu-latest
@@ -279,6 +286,7 @@ jobs:
     if: always()
     steps:
       - name: 📊 Préparer le rapport
+        id: report
         run: |
           echo "📊 === RAPPORT CI ===" > ci_report.md
           echo "Date: $(date)" >> ci_report.md
@@ -304,16 +312,22 @@ jobs:
             echo "❌ Audit Sécurité: ÉCHEC" >> ci_report.md
           fi
           
-          if [[ "${{ needs.package-charts.result }}" == "success" ]]; then
-            echo "✅ Packaging: SUCCÈS" >> ci_report.md
+          if [[ "${{ needs.package-charts.result }}" == "success" || "${{ needs.package-charts.result }}" == "skipped" ]]; then
+            echo "✅ Packaging: SUCCÈS (ou skipped)" >> ci_report.md
           else
-            echo "❌ Packaging: ÉCHEC (ou non lancé)" >> ci_report.md
+            echo "❌ Packaging: ÉCHEC" >> ci_report.md
           fi
           
           echo "" >> ci_report.md
           echo "🚀 CI terminé - Prêt pour revue!" >> ci_report.md
           
           cat ci_report.md
+
+      - name: 📤 Upload Rapport comme Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ci-report
+          path: ci_report.md
 
       - name: 📢 Résultat final
         run: |
