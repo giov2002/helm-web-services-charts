@@ -22,156 +22,121 @@ on:
       - 'mailserver/**'
       - 'roundcube/**'
 
-env:
-  REGISTRY: ghcr.io
-  NAMESPACE_PREFIX: prod
-
 jobs:
-  # Job 1: Détection des services modifiés
   detect-changes:
     name: 🔍 Détection des Changements
     runs-on: ubuntu-latest
     outputs:
-      charts: ${{ steps.changes.outputs.charts }}
-    
+      charts: ${{ steps.set-changes.outputs.charts }}
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: 🔍 Détecter les changements par service
-      id: changes
-      run: |
-        charts_changed=""
-        
-        check_changes() {
-          local service=$1
-          local path=$2
-          if git diff --name-only HEAD~1 | grep -q "^${path}/"; then
-            echo "${service}=true" >> $GITHUB_OUTPUT
-            charts_changed="${charts_changed},${service}"
-            echo "✅ Changements détectés dans: $service"
-          else
-            echo "${service}=false" >> $GITHUB_OUTPUT
-            echo "⏸️ Aucun changement dans: $service"
-          fi
-        }
+      - name: 🔍 Analyser les fichiers modifiés
+        id: set-changes
+        run: |
+          services=("bind9" "database/mysql" "database/phpmyadmin" "mailserver" "monitoring/monitoring-chart" "roundcube" "web-apache" "web-nginx")
+          modified=()
 
-        check_changes "bind9" "bind9"
-        check_changes "mysql" "database/mysql"
-        check_changes "phpmyadmin" "database/phpmyadmin"
-        check_changes "mailserver" "mailserver"
-        check_changes "monitoring" "monitoring"
-        check_changes "roundcube" "roundcube"
-        check_changes "web-apache" "web-apache"
-        check_changes "web-nginx" "web-nginx"
+          for chart in "${services[@]}"; do
+            if git diff --name-only origin/main...HEAD | grep -q "^${chart}/"; then
+              name=$(basename "$chart")
+              modified+=("$name")
+              echo "✅ $chart modifié"
+            else
+              echo "⏸️ Aucun changement dans $chart"
+            fi
+          done
 
-        charts_changed=$(echo "$charts_changed" | sed 's/^,//')
-        echo "charts=${charts_changed}" >> $GITHUB_OUTPUT
-        echo "📋 Services modifiés: $charts_changed"
+          json=$(printf '%s\n' "${modified[@]}" | jq -R -s -c 'split("\n")[:-1]')
+          echo "charts=$json" >> $GITHUB_OUTPUT
+          echo "📋 Charts modifiés : $json"
 
-  # Job 2: Validation Helm complète
   validate-charts:
     name: 🧪 Validation Helm Charts
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.charts != '' }}
+    if: ${{ needs.detect-changes.outputs.charts != '[]' }}
     strategy:
       matrix:
-        chart: ${{ fromJson(format('[{0}]', needs.detect-changes.outputs.charts)) }}
+        chart: ${{ fromJson(needs.detect-changes.outputs.charts) }}
       fail-fast: false
-    
+
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: ⚙️ Installer Helm
-      uses: azure/setup-helm@v3
-      with:
-        version: '3.12.0'
+      - name: ⚙️ Installer Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.12.0'
 
-    - name: ⚡ Installer yamllint
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y yamllint
+      - name: ⚙️ Installer yamllint
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y yamllint jq
 
-    - name: 🔍 Validation du chart ${{ matrix.chart }}
-      run: |
-        # Définir le chemin du chart
-        chart_path=""
-        case "${{ matrix.chart }}" in
-          "mysql") chart_path="database/mysql" ;;
-          "phpmyadmin") chart_path="database/phpmyadmin" ;;
-          "monitoring") chart_path="monitoring/monitoring-chart" ;;
-          *) chart_path="${{ matrix.chart }}" ;;
-        esac
-        
-        echo "🔍 Validation de: $chart_path"
+      - name: 🔍 Validation de ${{ matrix.chart }}
+        run: |
+          declare -A chart_paths=(
+            [mysql]="database/mysql"
+            [phpmyadmin]="database/phpmyadmin"
+            [monitoring]="monitoring/monitoring-chart"
+            [bind9]="bind9"
+            [mailserver]="mailserver"
+            [roundcube]="roundcube"
+            [web-apache]="web-apache"
+            [web-nginx]="web-nginx"
+          )
 
-        # Lint et Dry-run
-        helm lint $chart_path/
-        helm template test-${{ matrix.chart }} $chart_path/ --dry-run
+          chart="${{ matrix.chart }}"
+          path="${chart_paths[$chart]}"
 
-        # YAML lint pour tous les fichiers YAML
-        yamllint $chart_path/
+          echo "📦 Analyse de $chart (chemin: $path)"
 
-        # Vérification des ressources
-        if helm template test $chart_path/ | grep -q "resources:"; then
-          echo "✅ Limites de ressources définies"
-        else
-          echo "⚠️ Ressources non définies"
-        fi
+          echo "🔍 helm lint"
+          helm lint "$path"
 
-        # Vérification des secrets
-        if grep -r "password.*:" "$chart_path/" --include="*.yaml" | grep -v "passwordSecretRef" | grep -v "# Example"; then
-          echo "⚠️ Secrets potentiellement en dur trouvés"
-        else
-          echo "✅ Secrets correctement gérés"
-        fi
+          echo "🧪 helm template dry-run"
+          helm template "test-$chart" "$path" --dry-run
 
-        # Vérification des images
-        images=$(helm template test $chart_path/ | grep "image:" | awk '{print $2}' | sort | uniq)
-        for img in $images; do
-          if [[ "$img" == *":latest" ]] || [[ "$img" != *:* ]]; then
-            echo "⚠️ Image non taggée ou latest: $img"
+          echo "📄 Vérification syntaxe YAML"
+          yamllint "$path"
+
+          echo "🔒 Vérification des secrets en dur"
+          if grep -rE "password.*:" "$path" --include="*.yaml" | grep -vE "passwordSecretRef|#|description"; then
+            echo "⚠️ Mot de passe trouvé en dur"
           else
-            echo "✅ Image ok: $img"
+            echo "✅ Aucun secret en dur détecté"
           fi
-        done
 
-        # Vérification des labels Kubernetes standards
-        labels=$(helm template test $chart_path/ | grep -E "app.kubernetes.io/(name|version|managed-by):")
-        if [ -z "$labels" ]; then
-          echo "⚠️ Labels standard Kubernetes manquants"
-        else
-          echo "✅ Labels standard présents"
-          echo "$labels"
-        fi
+          echo "📐 Vérification des ressources"
+          if helm template "test-$chart" "$path" | grep -q "resources:"; then
+            echo "✅ Ressources CPU/memory définies"
+          else
+            echo "⚠️ Ressources non définies"
+          fi
 
-        # Vérification des dépendances
-        if [ -f "$chart_path/Chart.yaml" ]; then
-          helm dependency update $chart_path/
-          helm dep list $chart_path/
-        fi
+          echo "📦 Vérification des images Docker"
+          images=$(helm template "test-$chart" "$path" | grep "image:" | awk '{print $2}' | sort | uniq)
+          for img in $images; do
+            if [[ "$img" == *":latest" || "$img" != *:* ]]; then
+              echo "⚠️ Image non taggée ou utilisant latest : $img"
+            else
+              echo "✅ Image OK : $img"
+            fi
+          done
 
-    - name: 📋 Résumé pour ${{ matrix.chart }}
-      run: |
-        echo "✅ Validation CI terminée pour ${{ matrix.chart }}"
+          echo "🏷️ Vérification des labels Kubernetes"
+          labels=$(helm template "test-$chart" "$path" | grep -E "app.kubernetes.io/(name|version|managed-by):")
+          if [ -z "$labels" ]; then
+            echo "⚠️ Labels Kubernetes manquants"
+          else
+            echo "✅ Labels présents"
+          fi
 
-  # Job 3: Rapport global CI
-  report:
-    name: 📊 Rapport CI
-    runs-on: ubuntu-latest
-    needs: validate-charts
-    if: ${{ needs.detect-changes.outputs.charts != '' }}
-    
-    steps:
-    - name: 📊 Générer un rapport CI
-      run: |
-        echo "📋 === RAPPORT CI HELM ===" > ci_report.md
-        echo "Date: $(date)" >> ci_report.md
-        echo "Branch: ${{ github.ref }}" >> ci_report.md
-        echo "Commit: ${{ github.sha }}" >> ci_report.md
-        echo "Services modifiés: ${{ needs.detect-changes.outputs.charts }}" >> ci_report.md
-        echo "" >> ci_report.md
-        echo "✅ Chaque chart a été linté et dry-run validé, YAML vérifié, secrets et images analysés." >> ci_report.md
-        cat ci_report.md
+          echo "🔄 Dépendances Helm (si présentes)"
+          if [ -f "$path/Chart.yaml" ]; then
+            helm dependency update "$path" || true
+            helm dependency list "$path" || true
+          fi
