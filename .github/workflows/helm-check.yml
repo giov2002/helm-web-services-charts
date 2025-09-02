@@ -41,15 +41,20 @@ jobs:
 
           for chart in "${services[@]}"; do
             if git diff --name-only origin/main...HEAD | grep -q "^${chart}/"; then
-              name=$(basename "$chart")
+              name=$(basename "$chart")   # ex: monitoring/monitoring-chart -> monitoring-chart
               modified+=("$name")
-              echo "✅ $chart modifié"
+              echo "✅ $chart modifié (clé: $name)"
             else
               echo "⏸️ Aucun changement dans $chart"
             fi
           done
 
-          json=$(printf '%s\n' "${modified[@]}" | jq -R -s -c 'split("\n")[:-1]')
+          # Construit un JSON propre et supprime les éléments vides
+          json=$(
+            printf '%s\n' "${modified[@]}" \
+            | jq -R -s -c 'split("\n") | map(select(length>0))'
+          )
+
           echo "charts=$json" >> $GITHUB_OUTPUT
           echo "📋 Charts modifiés : $json"
 
@@ -77,11 +82,14 @@ jobs:
           sudo apt-get install -y yamllint jq
 
       - name: 🔍 Validation de ${{ matrix.chart }}
+        shell: bash
         run: |
+          set -euo pipefail
+
           declare -A chart_paths=(
             [mysql]="database/mysql"
             [phpmyadmin]="database/phpmyadmin"
-            [monitoring]="monitoring/monitoring-chart"
+            [monitoring-chart]="monitoring/monitoring-chart"   # ✅ clé alignée
             [bind9]="bind9"
             [mailserver]="mailserver"
             [roundcube]="roundcube"
@@ -90,7 +98,22 @@ jobs:
           )
 
           chart="${{ matrix.chart }}"
-          path="${chart_paths[$chart]}"
+          if [[ -z "${chart:-}" ]]; then
+            echo "⏭️ Chart vide dans la matrice, on saute proprement."
+            exit 0
+          fi
+
+          path="${chart_paths[$chart]:-}"
+          if [[ -z "${path:-}" ]]; then
+            echo "❌ Clé inconnue '$chart' dans chart_paths. Vérifie detect-changes et chart_paths."
+            echo "🔎 chart_paths disponibles: ${!chart_paths[*]}"
+            exit 1
+          fi
+
+          if [[ ! -f "$path/Chart.yaml" ]]; then
+            echo "❌ Chart.yaml introuvable pour '$chart' (path: $path)"
+            exit 1
+          fi
 
           echo "📦 Analyse de $chart (chemin: $path)"
 
@@ -118,7 +141,7 @@ jobs:
           fi
 
           echo "📦 Vérification des images Docker"
-          images=$(helm template "test-$chart" "$path" | grep "image:" | awk '{print $2}' | sort | uniq)
+          images=$(helm template "test-$chart" "$path" | grep -E "^\s*image:\s*" | awk '{print $2}' | sort -u || true)
           for img in $images; do
             if [[ "$img" == *":latest" || "$img" != *:* ]]; then
               echo "⚠️ Image non taggée ou utilisant latest : $img"
@@ -128,15 +151,12 @@ jobs:
           done
 
           echo "🏷️ Vérification des labels Kubernetes"
-          labels=$(helm template "test-$chart" "$path" | grep -E "app.kubernetes.io/(name|version|managed-by):")
-          if [ -z "$labels" ]; then
-            echo "⚠️ Labels Kubernetes manquants"
-          else
+          if helm template "test-$chart" "$path" | grep -qE "app.kubernetes.io/(name|version|managed-by):"; then
             echo "✅ Labels présents"
+          else
+            echo "⚠️ Labels Kubernetes manquants"
           fi
 
           echo "🔄 Dépendances Helm (si présentes)"
-          if [ -f "$path/Chart.yaml" ]; then
-            helm dependency update "$path" || true
-            helm dependency list "$path" || true
-          fi
+          helm dependency update "$path" || true
+          helm dependency list "$path" || true

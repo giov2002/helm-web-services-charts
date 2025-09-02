@@ -1,4 +1,4 @@
-replicaCount: 5
+replicaCount: 1
 image:
   repository: ubuntu/bind9
   pullPolicy: IfNotPresent
