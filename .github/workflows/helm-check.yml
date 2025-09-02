@@ -89,7 +89,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.charts != '' }}  # Vérifie que la liste des charts n'est pas vide
     strategy:
       matrix:
-        chart: ${{ fromJson('[\"' + needs.detect-changes.outputs.charts.replace(',', '","') + '\"]') }}  # Correction de format JSON
+        chart: ${{ fromJson('["' + needs.detect-changes.outputs.charts.replace(',', '","') + '"]') }}  # Correction du format JSON
       fail-fast: false
     
     steps:
