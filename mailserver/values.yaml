@@ -10,7 +10,7 @@ mailserver:
     tag: latest
     pullPolicy: IfNotPresent
   
-  replicaCount: 1
+  replicaCount: 2
   
   # Configuration SSL
   ssl:
