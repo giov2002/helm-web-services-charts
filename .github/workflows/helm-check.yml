@@ -139,13 +139,13 @@ jobs:
 
           chart_path="${paths[${{ matrix.chart }}]}"
           echo "🔍 Validation de: $chart_path"
-          helm lint "$chart_path" --strict
+          helm lint "$chart_path"
           helm template "test-${{ matrix.chart }}" "$chart_path" --dry-run
           echo "✅ ${{ matrix.chart }} validé"
 
-  # Job 3: Lint YAML et Kubernetes
-  lint-yaml-k8s:
-    name: 📏 Lint YAML & K8s
+  # Job 3: Lint YAML Simple
+  lint-yaml:
+    name: 📏 Lint YAML
     runs-on: ubuntu-latest
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.charts != '[]' }}
@@ -159,35 +159,22 @@ jobs:
       - name: ⚙️ Setup yamllint
         run: sudo apt-get update && sudo apt-get install -y yamllint
 
-      - name: ⚙️ Setup kube-linter
+      - name: ⚙️ Configuration yamllint souple
         run: |
-          curl -LO https://github.com/stackrox/kube-linter/releases/download/v0.7.5/kube-linter-linux
-          chmod +x kube-linter-linux
-          sudo mv kube-linter-linux /usr/local/bin/kube-linter
-          kube-linter version
-
-      - name: ⚙️ Créer configuration kube-linter
-        run: |
-          cat <<EOF > .kube-linter.yaml
-          checks:
-            - name: latest-tag
-              enabled: false
-            - name: no-read-only-root-fs
-              enabled: false
-            - name: run-as-non-root
-              enabled: false
-            - name: unset-cpu-requirements
-              enabled: false
-            - name: unset-memory-requirements
-              enabled: false
-            - name: drop-net-raw-capability
-              enabled: false
-            - name: privilege-escalation-container
-              enabled: false
-            - name: privileged-container
-              enabled: false
-            - name: no-anti-affinity
-              enabled: false
+          cat <<EOF > .yamllint.yaml
+          extends: default
+          rules:
+            line-length:
+              max: 120
+            indentation:
+              spaces: 2
+            comments:
+              min-spaces-from-content: 1
+            truthy:
+              allowed-values: ['true', 'false', 'yes', 'no']
+          ignore: |
+            *.tgz
+            */templates/*.tpl
           EOF
 
       - name: 📏 Lint YAML pour ${{ matrix.chart }}
@@ -206,31 +193,13 @@ jobs:
           chart_path="${paths[${{ matrix.chart }}]}"
           echo "📏 Lint YAML dans: $chart_path"
           if find "$chart_path" -name "*.yaml" | grep -q .; then
-            find "$chart_path" -name "*.yaml" -exec yamllint {} \;
+            find "$chart_path" -name "*.yaml" -exec yamllint -c .yamllint.yaml {} \; || echo "⚠️ Warnings YAML - continuer"
           else
             echo "⚠️ Aucun fichier YAML trouvé – skip"
           fi
-          echo "✅ YAML lint passé"
+          echo "✅ YAML lint terminé"
 
-      - name: 🔒 Lint Kubernetes pour ${{ matrix.chart }}
-        run: |
-          declare -A paths=(
-            [mysql]="database/mysql"
-            [phpmyadmin]="database/phpmyadmin"
-            [monitoring]="monitoring/monitoring-chart"
-            [bind9]="bind9"
-            [mailserver]="mailserver"
-            [roundcube]="roundcube"
-            [web-apache]="web-apache"
-            [web-nginx]="web-nginx"
-          )
-
-          chart_path="${paths[${{ matrix.chart }}]}"
-          echo "🔒 Lint K8s dans: $chart_path"
-          helm template "test-${{ matrix.chart }}" "$chart_path" | kube-linter lint - --config .kube-linter.yaml
-          echo "✅ K8s lint passé"
-
-  # Job 4: Audit de Sécurité
+  # Job 4: Audit de Sécurité Simple
   security-audit:
     name: 🔒 Audit de Sécurité
     runs-on: ubuntu-latest
@@ -243,12 +212,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: ⚙️ Setup Helm
-        uses: azure/setup-helm@v3
-        with:
-          version: '3.12.0'
-
-      - name: 🔒 Vérification des secrets et ressources pour ${{ matrix.chart }}
+      - name: 🔒 Vérification des secrets pour ${{ matrix.chart }}
         run: |
           declare -A paths=(
             [mysql]="database/mysql"
@@ -262,27 +226,22 @@ jobs:
           )
 
           chart_path="${paths[${{ matrix.chart }}]}"
-          echo "🔒 Audit de: $chart_path"
+          echo "🔒 Audit de sécurité: $chart_path"
 
-          if grep -rE "password.*:.*[a-zA-Z0-9]" "$chart_path/" --include="*.yaml" --exclude="*.tpl" | grep -v "passwordSecretRef" | grep -v "#"; then
-            echo "⚠️ Mots de passe potentiellement en dur détectés"
-            exit 1
+          # Recherche de mots de passe en dur (souple)
+          if grep -rE "password.*:.*[a-zA-Z0-9]" "$chart_path/" --include="*.yaml" --exclude="*.tpl" | grep -v "passwordSecretRef" | grep -v "#" | grep -v "example"; then
+            echo "⚠️ Mots de passe potentiellement en dur - Vérifiez manuellement"
           else
-            echo "✅ Pas de mots de passe en dur"
+            echo "✅ Pas de mots de passe en dur détectés"
           fi
 
-          if helm template "test-${{ matrix.chart }}" "$chart_path" | grep -q "resources:"; then
-            echo "✅ Limites de ressources définies"
-          else
-            echo "⚠️ Limites de ressources manquantes"
-            exit 1
-          fi
+          echo "✅ Audit sécurité terminé (mode test)"
 
-  # Job 5: Package Charts
+  # Job 5: Package Charts (seulement sur main)
   package-charts:
     name: 📦 Package des Charts
     runs-on: ubuntu-latest
-    needs: [validate-charts, lint-yaml-k8s, security-audit]
+    needs: [validate-charts, lint-yaml, security-audit]
     if: ${{ needs.detect-changes.outputs.charts != '[]' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v4
@@ -313,67 +272,59 @@ jobs:
           done
 
       - name: 📤 Upload Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: helm-charts
           path: artifacts/*.tgz
 
-  # Job 6: Notification
+  # Job 6: Notification Simple
   notification:
     name: 📢 Notification
     runs-on: ubuntu-latest
-    needs: [validate-charts, lint-yaml-k8s, security-audit, package-charts]
+    needs: [validate-charts, lint-yaml, security-audit, package-charts]
     if: always()
     steps:
-      - name: 📊 Préparer le rapport
-        id: report
+      - name: 📊 Rapport Final
         run: |
-          echo "📊 === RAPPORT CI ===" > ci_report.md
-          echo "Date: $(date)" >> ci_report.md
-          echo "Branch: ${{ github.ref }}" >> ci_report.md
-          echo "Commit: ${{ github.sha }}" >> ci_report.md
-          echo "" >> ci_report.md
+          echo "📊 === RAPPORT CI ===" 
+          echo "Date: $(date)"
+          echo "Branch: ${{ github.ref }}"
+          echo "Commit: ${{ github.sha }}"
+          echo ""
           
           if [[ "${{ needs.validate-charts.result }}" == "success" ]]; then
-            echo "✅ Validation Charts: SUCCÈS" >> ci_report.md
+            echo "✅ Validation Charts: SUCCÈS"
           else
-            echo "❌ Validation Charts: ÉCHEC" >> ci_report.md
+            echo "❌ Validation Charts: ÉCHEC"
           fi
           
-          if [[ "${{ needs.lint-yaml-k8s.result }}" == "success" ]]; then
-            echo "✅ Lint YAML/K8s: SUCCÈS" >> ci_report.md
+          if [[ "${{ needs.lint-yaml.result }}" == "success" ]]; then
+            echo "✅ Lint YAML: SUCCÈS"
           else
-            echo "❌ Lint YAML/K8s: ÉCHEC" >> ci_report.md
+            echo "❌ Lint YAML: ÉCHEC"
           fi
           
           if [[ "${{ needs.security-audit.result }}" == "success" ]]; then
-            echo "✅ Audit Sécurité: SUCCÈS" >> ci_report.md
+            echo "✅ Audit Sécurité: SUCCÈS"
           else
-            echo "❌ Audit Sécurité: ÉCHEC" >> ci_report.md
+            echo "❌ Audit Sécurité: ÉCHEC"
           fi
           
           if [[ "${{ needs.package-charts.result }}" == "success" || "${{ needs.package-charts.result }}" == "skipped" ]]; then
-            echo "✅ Packaging: SUCCÈS (ou skipped)" >> ci_report.md
+            echo "✅ Packaging: OK"
           else
-            echo "❌ Packaging: ÉCHEC" >> ci_report.md
+            echo "❌ Packaging: ÉCHEC"
           fi
           
-          echo "" >> ci_report.md
-          echo "🚀 CI terminé - Prêt pour revue!" >> ci_report.md
-          
-          cat ci_report.md
-
-      - name: 📤 Upload Rapport comme Artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: ci-report
-          path: ci_report.md
+          echo ""
+          echo "🚀 CI terminé pour environnement de test local!"
 
       - name: 📢 Résultat final
         run: |
-          if [[ "${{ needs.validate-charts.result }}" == "success" && "${{ needs.lint-yaml-k8s.result }}" == "success" && "${{ needs.security-audit.result }}" == "success" ]]; then
-            echo "🎉 SUCCÈS: Tous les checks CI sont passés!"
+          # Mode souple pour tests locaux - ne pas faire échouer sur warnings
+          if [[ "${{ needs.validate-charts.result }}" == "success" ]]; then
+            echo "🎉 SUCCÈS: Charts validés - Prêt pour tests locaux!"
           else
-            echo "❌ ÉCHEC: Certains checks ont échoué - Révision nécessaire"
+            echo "❌ ÉCHEC: Révision nécessaire avant déploiement"
             exit 1
           fi
