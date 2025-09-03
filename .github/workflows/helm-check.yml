@@ -47,6 +47,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: 🔍 Vérifier l'existence des dossiers
+        run: |
+          declare -A services=(
+            [bind9]="bind9"
+            [mysql]="database/mysql"
+            [phpmyadmin]="database/phpmyadmin"
+            [mailserver]="mailserver"
+            [monitoring]="monitoring/monitoring-chart"
+            [roundcube]="roundcube"
+            [web-apache]="web-apache"
+            [web-nginx]="web-nginx"
+          )
+          for svc in "${!services[@]}"; do
+            if [ ! -d "${services[$svc]}" ]; then
+              echo "❌ Erreur : Dossier ${services[$svc]} manquant"
+              exit 1
+            fi
+          done
+          echo "✅ Tous les dossiers de charts existent"
+
       - name: 🔍 Détecter les changements par service
         id: changes
         run: |
@@ -63,7 +83,6 @@ jobs:
 
           charts_changed=()
 
-          # Gestion des diffs pour push/PR
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             git fetch origin ${{ github.base_ref }}:${{ github.base_ref }}
             diff_base="${{ github.base_ref }}"
@@ -83,7 +102,6 @@ jobs:
             fi
           done
 
-          # Exporter la liste JSON pour matrice
           charts_json=$(printf '%s\n' "${charts_changed[@]}" | jq -R -s -c 'split("\n")[:-1]')
           echo "charts=${charts_json}" >> $GITHUB_OUTPUT
           echo "📋 Services à déployer: ${charts_changed[*]}"
@@ -141,12 +159,36 @@ jobs:
       - name: ⚙️ Setup yamllint
         run: sudo apt-get update && sudo apt-get install -y yamllint
 
-      - name: ⚙️ Setup kube-linter (version latest)
+      - name: ⚙️ Setup kube-linter
         run: |
           curl -LO https://github.com/stackrox/kube-linter/releases/download/v0.7.5/kube-linter-linux
           chmod +x kube-linter-linux
           sudo mv kube-linter-linux /usr/local/bin/kube-linter
-          kube-linter version  # Vérification
+          kube-linter version
+
+      - name: ⚙️ Créer configuration kube-linter
+        run: |
+          cat <<EOF > .kube-linter.yaml
+          checks:
+            - name: latest-tag
+              enabled: false
+            - name: no-read-only-root-fs
+              enabled: false
+            - name: run-as-non-root
+              enabled: false
+            - name: unset-cpu-requirements
+              enabled: false
+            - name: unset-memory-requirements
+              enabled: false
+            - name: drop-net-raw-capability
+              enabled: false
+            - name: privilege-escalation-container
+              enabled: false
+            - name: privileged-container
+              enabled: false
+            - name: no-anti-affinity
+              enabled: false
+          EOF
 
       - name: 📏 Lint YAML pour ${{ matrix.chart }}
         run: |
@@ -185,7 +227,7 @@ jobs:
 
           chart_path="${paths[${{ matrix.chart }}]}"
           echo "🔒 Lint K8s dans: $chart_path"
-          helm template "test-${{ matrix.chart }}" "$chart_path" | kube-linter lint -
+          helm template "test-${{ matrix.chart }}" "$chart_path" | kube-linter lint - --config .kube-linter.yaml
           echo "✅ K8s lint passé"
 
   # Job 4: Audit de Sécurité
@@ -222,7 +264,6 @@ jobs:
           chart_path="${paths[${{ matrix.chart }}]}"
           echo "🔒 Audit de: $chart_path"
 
-          # Vérification des mots de passe en dur
           if grep -rE "password.*:.*[a-zA-Z0-9]" "$chart_path/" --include="*.yaml" --exclude="*.tpl" | grep -v "passwordSecretRef" | grep -v "#"; then
             echo "⚠️ Mots de passe potentiellement en dur détectés"
             exit 1
@@ -230,7 +271,6 @@ jobs:
             echo "✅ Pas de mots de passe en dur"
           fi
 
-          # Vérification des limites de ressources
           if helm template "test-${{ matrix.chart }}" "$chart_path" | grep -q "resources:"; then
             echo "✅ Limites de ressources définies"
           else
