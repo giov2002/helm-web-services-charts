@@ -1,0 +1,12 @@
+{{- if .Release.Namespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Namespace }}
+  labels:
+    helm.sh/chart: {{ include "unbound.chart" . | quote }}
+    app.kubernetes.io/name: {{ include "unbound.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}

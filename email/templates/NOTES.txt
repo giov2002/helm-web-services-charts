@@ -1,0 +1,67 @@
+🔥 MAILSTACK DÉPLOYÉ AVEC SUCCÈS! 🔥
+
+Votre stack email complète est maintenant en cours de démarrage.
+
+📧 SERVEUR EMAIL:
+  - Namespace: {{ .Values.global.namespace }}
+  - Domaine: {{ .Values.mailserver.env.DOMAINNAME }}
+  - Hostname: {{ .Values.mailserver.env.HOSTNAME }}
+
+👥 COMPTES EMAIL CRÉÉS:
+{{- range .Values.mailserver.accounts }}
+  - {{ .email }} (password: {{ .password }})
+{{- end }}
+
+🌐 INTERFACES ROUNDCUBE:
+{{- if .Values.roundcube.instance1.enabled }}
+  - User1 Interface: http://VOTRE_NODE_IP:{{ .Values.roundcube.instance1.service.nodePort }}
+    Nom du service: {{ .Values.roundcube.instance1.name }}
+{{- end }}
+{{- if .Values.roundcube.instance2.enabled }}
+  - User2 Interface: http://VOTRE_NODE_IP:{{ .Values.roundcube.instance2.service.nodePort }}
+    Nom du service: {{ .Values.roundcube.instance2.name }}
+{{- end }}
+
+📋 COMMANDES UTILES:
+  
+  1. Vérifier le statut:
+     kubectl get all -n {{ .Values.global.namespace }}
+  
+  2. Voir les logs du mailserver:
+     kubectl logs -n {{ .Values.global.namespace }} deployment/mailserver -f
+  
+  3. Obtenir l'IP du node:
+     kubectl get nodes -o wide
+  
+  4. Port-forward si nécessaire:
+{{- if .Values.roundcube.instance1.enabled }}
+     kubectl port-forward -n {{ .Values.global.namespace }} svc/{{ .Values.roundcube.instance1.name }} 8081:80
+{{- end }}
+{{- if .Values.roundcube.instance2.enabled }}
+     kubectl port-forward -n {{ .Values.global.namespace }} svc/{{ .Values.roundcube.instance2.name }} 8082:80
+{{- end }}
+  
+  5. Accéder au conteneur mailserver:
+     kubectl exec -it -n {{ .Values.global.namespace }} deployment/mailserver -- /bin/bash
+
+🔧 CONFIGURATION:
+  - SMTP: port {{ .Values.mailserver.ports.smtp }}
+  - IMAP: port {{ .Values.mailserver.ports.imap }}
+  - IMAPS: port {{ .Values.mailserver.ports.imaps }}
+  - Submission: port {{ .Values.mailserver.ports.submission }}
+  - SMTPS: port {{ .Values.mailserver.ports.smtps }}
+
+⏳ ATTENTION: Le démarrage complet peut prendre 2-3 minutes.
+Attendez que tous les pods soient en état "Running" avant de tester.
+
+🧪 TEST:
+Une fois déployé, connectez-vous aux interfaces Roundcube avec:
+{{- range .Values.mailserver.accounts }}
+- Email: {{ .email }}
+- Password: {{ .password }}
+{{- end }}
+
+Vous pouvez ensuite envoyer des emails entre les deux comptes pour tester!
+
+📞 Support:
+Pour vérifier les problèmes: kubectl describe pods -n {{ .Values.global.namespace }}

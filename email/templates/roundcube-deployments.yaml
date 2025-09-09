@@ -22,6 +22,11 @@ spec:
     matchLabels:
       {{- include "mailstack.roundcube.selectorLabels" . | nindent 6 }}
       app: {{ .Values.roundcube.instance1.name }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0  # Aucun pod ne sera indisponible pendant la mise à jour
+      maxSurge: 1         # Une nouvelle instance de pod sera créée pendant la mise à jour
   template:
     metadata:
       labels:
@@ -100,9 +105,9 @@ metadata:
   labels:
     {{- include "mailstack.roundcube.labels" . | nindent 4 }}
     app: {{ .Values.roundcube.instance2.name }}
-    {{- with .Values.commonLabels }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
+  {{- with .Values.commonLabels }}
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
   {{- with .Values.commonAnnotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -113,6 +118,11 @@ spec:
     matchLabels:
       {{- include "mailstack.roundcube.selectorLabels" . | nindent 6 }}
       app: {{ .Values.roundcube.instance2.name }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0  # Aucun pod ne sera indisponible pendant la mise à jour
+      maxSurge: 1         # Une nouvelle instance de pod sera créée pendant la mise à jour
   template:
     metadata:
       labels:

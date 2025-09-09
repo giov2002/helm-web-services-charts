@@ -1,0 +1,9 @@
+apiVersion: v2
+name: unbound
+description: |
+  Helm chart to deploy the Unbound DNS resolver. Unbound est un
+  résolveur récursif, validant et cache développé par NLnet Labs.
+  Ce chart expose le service dans Kubernetes et fournit des valeurs
+  adaptées aux environnements de test comme Minikube.
+version: 0.1.0
+appVersion: "1.13.1"

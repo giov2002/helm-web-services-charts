@@ -1,13 +1,14 @@
 {{- if .Values.mailserver.enabled }}
-{{- if .Values.mailserver.persistence.mailData.enabled }}
+{{- if .Values.mailserver.persistence.enabled }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: mail-data
+  name: mailserver-data
   namespace: {{ .Values.global.namespace }}
   labels:
     {{- include "mailstack.mailserver.labels" . | nindent 4 }}
+    component: data
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -17,24 +18,23 @@ metadata:
   {{- end }}
 spec:
   accessModes:
-    - {{ .Values.mailserver.persistence.mailData.accessMode }}
+    - ReadWriteOnce
   resources:
     requests:
-      storage: {{ .Values.mailserver.persistence.mailData.size }}
-  {{- if .Values.mailserver.persistence.mailData.storageClass }}
-  storageClassName: {{ .Values.mailserver.persistence.mailData.storageClass }}
+      storage: {{ .Values.mailserver.persistence.size }}
+  {{- if .Values.mailserver.persistence.storageClass }}
+  storageClassName: {{ .Values.mailserver.persistence.storageClass }}
   {{- end }}
-{{- end }}
 
-{{- if .Values.mailserver.persistence.mailState.enabled }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: mail-state
+  name: mailserver-state
   namespace: {{ .Values.global.namespace }}
   labels:
     {{- include "mailstack.mailserver.labels" . | nindent 4 }}
+    component: state
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -44,24 +44,23 @@ metadata:
   {{- end }}
 spec:
   accessModes:
-    - {{ .Values.mailserver.persistence.mailState.accessMode }}
+    - ReadWriteOnce
   resources:
     requests:
-      storage: {{ .Values.mailserver.persistence.mailState.size }}
-  {{- if .Values.mailserver.persistence.mailState.storageClass }}
-  storageClassName: {{ .Values.mailserver.persistence.mailState.storageClass }}
+      storage: 2Gi
+  {{- if .Values.mailserver.persistence.storageClass }}
+  storageClassName: {{ .Values.mailserver.persistence.storageClass }}
   {{- end }}
-{{- end }}
 
-{{- if .Values.mailserver.persistence.mailLogs.enabled }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: mail-logs
+  name: mailserver-logs
   namespace: {{ .Values.global.namespace }}
   labels:
     {{- include "mailstack.mailserver.labels" . | nindent 4 }}
+    component: logs
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -71,19 +70,44 @@ metadata:
   {{- end }}
 spec:
   accessModes:
-    - {{ .Values.mailserver.persistence.mailLogs.accessMode }}
+    - ReadWriteOnce
   resources:
     requests:
-      storage: {{ .Values.mailserver.persistence.mailLogs.size }}
-  {{- if .Values.mailserver.persistence.mailLogs.storageClass }}
-  storageClassName: {{ .Values.mailserver.persistence.mailLogs.storageClass }}
+      storage: 1Gi
+  {{- if .Values.mailserver.persistence.storageClass }}
+  storageClassName: {{ .Values.mailserver.persistence.storageClass }}
+  {{- end }}
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mailserver-config
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "mailstack.mailserver.labels" . | nindent 4 }}
+    component: config
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  {{- if .Values.mailserver.persistence.storageClass }}
+  storageClassName: {{ .Values.mailserver.persistence.storageClass }}
   {{- end }}
 {{- end }}
 {{- end }}
 
 {{- if .Values.roundcube.enabled }}
-{{- if .Values.roundcube.instance1.enabled }}
-{{- if .Values.roundcube.instance1.persistence.enabled }}
+{{- if and .Values.roundcube.instance1.enabled .Values.roundcube.instance1.persistence.enabled }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -93,6 +117,7 @@ metadata:
   labels:
     {{- include "mailstack.roundcube.labels" . | nindent 4 }}
     app: {{ .Values.roundcube.instance1.name }}
+    component: data
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -102,7 +127,7 @@ metadata:
   {{- end }}
 spec:
   accessModes:
-    - {{ .Values.roundcube.instance1.persistence.accessMode }}
+    - ReadWriteOnce
   resources:
     requests:
       storage: {{ .Values.roundcube.instance1.persistence.size }}
@@ -110,10 +135,8 @@ spec:
   storageClassName: {{ .Values.roundcube.instance1.persistence.storageClass }}
   {{- end }}
 {{- end }}
-{{- end }}
 
-{{- if .Values.roundcube.instance2.enabled }}
-{{- if .Values.roundcube.instance2.persistence.enabled }}
+{{- if and .Values.roundcube.instance2.enabled .Values.roundcube.instance2.persistence.enabled }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -123,6 +146,7 @@ metadata:
   labels:
     {{- include "mailstack.roundcube.labels" . | nindent 4 }}
     app: {{ .Values.roundcube.instance2.name }}
+    component: data
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -132,13 +156,12 @@ metadata:
   {{- end }}
 spec:
   accessModes:
-    - {{ .Values.roundcube.instance2.persistence.accessMode }}
+    - ReadWriteOnce
   resources:
     requests:
       storage: {{ .Values.roundcube.instance2.persistence.size }}
   {{- if .Values.roundcube.instance2.persistence.storageClass }}
   storageClassName: {{ .Values.roundcube.instance2.persistence.storageClass }}
   {{- end }}
-{{- end }}
 {{- end }}
 {{- end }}

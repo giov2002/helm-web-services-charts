@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mailserver
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ .Values.global.namespace }}
   labels:
     {{- include "mailstack.mailserver.labels" . | nindent 4 }}
     {{- with .Values.commonLabels }}
@@ -15,13 +15,6 @@ metadata:
   {{- end }}
 spec:
   replicas: {{ .Values.mailserver.replicaCount }}
-  strategy:
-    type: {{ .Values.mailserver.strategy.type }}
-    {{- if eq .Values.mailserver.strategy.type "RollingUpdate" }}
-    rollingUpdate:
-      maxUnavailable: {{ .Values.mailserver.strategy.rollingUpdate.maxUnavailable }}
-      maxSurge: {{ .Values.mailserver.strategy.rollingUpdate.maxSurge }}
-    {{- end }}
   selector:
     matchLabels:
       {{- include "mailstack.mailserver.selectorLabels" . | nindent 6 }}
@@ -37,7 +30,6 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      hostname: mail
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -61,46 +53,41 @@ spec:
         - name: imap
           containerPort: {{ .Values.mailserver.ports.imap }}
           protocol: TCP
-        - name: submission
-          containerPort: {{ .Values.mailserver.ports.submission }}
-          protocol: TCP
         - name: imaps
           containerPort: {{ .Values.mailserver.ports.imaps }}
+          protocol: TCP
+        - name: submission
+          containerPort: {{ .Values.mailserver.ports.submission }}
           protocol: TCP
         - name: smtps
           containerPort: {{ .Values.mailserver.ports.smtps }}
           protocol: TCP
         env:
-        - name: SSL_TYPE
-          value: "{{ .Values.mailserver.ssl.type }}"
-        - name: TLS_LEVEL
-          value: "{{ .Values.mailserver.ssl.tlsLevel }}"
-        - name: PERMIT_DOCKER
-          value: "container"
-        - name: ONE_DIR
-          value: "1"
-        - name: ENABLE_CLAMAV
-          value: "0"
-        - name: ENABLE_SPAMASSASSIN
-          value: "0"
-        - name: ENABLE_FAIL2BAN
-          value: "0"
-        - name: ENABLE_POSTGREY
-          value: "0"
-        - name: OVERRIDE_HOSTNAME
-          value: "mail.{{ .Values.global.domain }}"
-        envFrom:
-        - configMapRef:
-            name: mail-config
+        {{- range $key, $value := .Values.mailserver.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
         volumeMounts:
-        - name: mail-data
+        - name: mailserver-data
           mountPath: /var/mail
-        - name: mail-state
+        - name: mailserver-state
           mountPath: /var/mail-state
-        - name: mail-logs
+        - name: mailserver-logs
           mountPath: /var/log/mail
-        - name: mail-config-volume
+        - name: mailserver-config
           mountPath: /tmp/docker-mailserver
+        - name: mail-accounts
+          mountPath: /tmp/docker-mailserver/postfix-accounts.cf
+          subPath: postfix-accounts.cf
+          readOnly: true
+        - name: mail-accounts
+          mountPath: /tmp/docker-mailserver/postfix-virtual.cf
+          subPath: postfix-virtual.cf
+          readOnly: true
+        - name: mail-accounts
+          mountPath: /tmp/docker-mailserver/postfix-aliases.cf
+          subPath: postfix-aliases.cf
+          readOnly: true
         resources:
           {{- toYaml .Values.mailserver.resources | nindent 10 }}
         securityContext:
@@ -108,29 +95,54 @@ spec:
             add:
             - NET_ADMIN
             - SYS_PTRACE
+        livenessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - "supervisorctl status"
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - "nc -z localhost 25 && nc -z localhost 143"
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
       volumes:
-      - name: mail-data
-        {{- if .Values.mailserver.persistence.mailData.enabled }}
+      - name: mailserver-data
+        {{- if .Values.mailserver.persistence.enabled }}
         persistentVolumeClaim:
-          claimName: mail-data
+          claimName: mailserver-data
         {{- else }}
         emptyDir: {}
         {{- end }}
-      - name: mail-state
-        {{- if .Values.mailserver.persistence.mailState.enabled }}
+      - name: mailserver-state
+        {{- if .Values.mailserver.persistence.enabled }}
         persistentVolumeClaim:
-          claimName: mail-state
+          claimName: mailserver-state
         {{- else }}
         emptyDir: {}
         {{- end }}
-      - name: mail-logs
-        {{- if .Values.mailserver.persistence.mailLogs.enabled }}
+      - name: mailserver-logs
+        {{- if .Values.mailserver.persistence.enabled }}
         persistentVolumeClaim:
-          claimName: mail-logs
+          claimName: mailserver-logs
         {{- else }}
         emptyDir: {}
         {{- end }}
-      - name: mail-config-volume
+      - name: mailserver-config
+        {{- if .Values.mailserver.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: mailserver-config
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      - name: mail-accounts
         secret:
           secretName: mail-accounts
 {{- end }}
