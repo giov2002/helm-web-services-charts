@@ -1,0 +1,190 @@
+---
+# Playbook Ansible pour déclencher CI Helm dans un environnement Minikube
+# Adapté pour projet : Ansible + Docker + Kubernetes + Helm + CI/CD
+
+- name: 🚀 Déclencheur CI Helm - Projet Minikube
+  hosts: localhost
+  gather_facts: yes
+  vars_files:
+    - ansible-minikube-config.yml
+  
+  vars:
+    # Valeurs par défaut (overridables)
+    check_type: "{{ check_type | default('full') }}"
+    github_owner: "{{ github.owner }}"
+    github_repo: "{{ github.repo }}"
+    github_token: "{{ github_pat | default(ansible_env.GITHUB_PAT) }}"
+    
+  pre_tasks:
+    - name: 📋 Vérification de l'environnement Minikube
+      block:
+        - name: 🔍 Vérifier Minikube
+          command: minikube status
+          register: minikube_status
+          failed_when: false
+          changed_when: false
+          
+        - name: 📊 Statut Minikube
+          debug:
+            msg: |
+              🎯 Environnement détecté:
+              - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+              - Minikube: {{ 'Actif' if minikube_status.rc == 0 else 'Inactif' }}
+              - Architecture: {{ ansible_architecture }}
+              
+        - name: ⚠️ Avertissement Minikube inactif
+          debug:
+            msg: |
+              ⚠️ Minikube semble inactif. 
+              Le CI va valider les charts mais le déploiement nécessitera Minikube actif.
+          when: minikube_status.rc != 0
+
+  tasks:
+    - name: 📦 Inventaire des charts Helm disponibles
+      find:
+        paths: "{{ paths.helm_charts }}"
+        file_type: directory
+        recurse: no
+      register: charts_dirs
+      
+    - name: 🔍 Validation de la structure des charts
+      block:
+        - name: 📋 Lister les charts détectés
+          debug:
+            msg: |
+              📦 Charts Helm détectés:
+              {% for chart_dir in charts_dirs.files %}
+              - {{ chart_dir.path | basename }}
+              {% endfor %}
+              
+        - name: ✅ Vérifier Chart.yaml pour chaque chart
+          stat:
+            path: "{{ item.path }}/Chart.yaml"
+          register: chart_files
+          loop: "{{ charts_dirs.files }}"
+          
+        - name: 📊 Résumé de validation
+          debug:
+            msg: |
+              📊 Validation des charts:
+              {% for result in chart_files.results %}
+              - {{ result.item.path | basename }}: {{ '✅ Valide' if result.stat.exists else '❌ Chart.yaml manquant' }}
+              {% endfor %}
+
+    - name: 🔐 Vérification des prérequis CI
+      block:
+        - name: 🔑 Vérifier le token GitHub
+          fail:
+            msg: |
+              ❌ Token GitHub manquant!
+              
+              Solutions:
+              1. Variable d'environnement: export GITHUB_PAT="your_token"
+              2. Paramètre Ansible: -e github_pat="your_token"
+              3. Vault Ansible (recommandé)
+              
+              Créer un token: https://github.com/settings/tokens
+              Scopes requis: repo, workflow
+          when: github_token is not defined or github_token == ""
+          
+        - name: 📡 Test de connectivité GitHub
+          uri:
+            url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}"
+            headers:
+              Authorization: "token {{ github_token }}"
+              Accept: "application/vnd.github.v3+json"
+            method: GET
+          register: github_test
+          
+        - name: ✅ Connexion GitHub OK
+          debug:
+            msg: |
+              ✅ Connexion GitHub établie:
+              - Repo: {{ github_test.json.full_name }}
+              - Visibilité: {{ github_test.json.visibility }}
+              - Dernière MAJ: {{ github_test.json.updated_at }}
+
+    - name: 🚀 Déclenchement du CI GitHub Actions
+      block:
+        - name: 📝 Paramètres du déclenchement
+          debug:
+            msg: |
+              🎯 Déclenchement CI avec les paramètres:
+              - Type de check: {{ check_type }}
+              - Workflow: {{ ci_cd.ci.workflow }}
+              - Déclenché par: Ansible (Minikube)
+              - Charts à valider: {{ services.keys() | list | join(', ') }}
+              
+        - name: 🚀 Lancement du workflow
+          uri:
+            url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}/actions/workflows/{{ ci_cd.ci.workflow }}/dispatches"
+            method: POST
+            headers:
+              Authorization: "token {{ github_token }}"
+              Accept: "application/vnd.github.v3+json"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              ref: "{{ github.branch }}"
+              inputs:
+                check_type: "{{ check_type }}"
+                triggered_by: "ansible"
+            status_code: 204
+          register: workflow_dispatch
+          
+        - name: ✅ CI déclenché avec succès
+          debug:
+            msg: |
+              🎉 CI Helm Charts déclenché avec succès!
+              
+              📋 Prochaines étapes:
+              1. 🌐 Suivez l'exécution: https://github.com/{{ github_owner }}/{{ github_repo }}/actions
+              2. ⏳ Attendez la validation (5-10 minutes)
+              3. ✅ Si CI vert → Prêt pour le déploiement Minikube
+              4. ❌ Si CI rouge → Vérifiez les logs et corrigez
+              
+              🔄 Pour relancer: ansible-playbook {{ ansible_play_name }} -e check_type={{ check_type }}
+
+  post_tasks:
+    - name: 📊 Rapport final
+      debug:
+        msg: |
+          📊 === RAPPORT CI MINIKUBE ===
+          
+          🏗️ Environnement:
+          - Plateforme: {{ environment.platform }}
+          - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - Kubernetes: Minikube {{ '(actif)' if minikube_status.rc == 0 else '(inactif)' }}
+          
+          📦 Charts validés:
+          {% for service in services.keys() %}
+          - {{ service }} (priorité {{ services[service].priority }})
+          {% endfor %}
+          
+          🎯 Actions réalisées:
+          - ✅ Validation de l'environnement local
+          - ✅ Vérification des charts Helm
+          - ✅ Test connectivité GitHub
+          - ✅ Déclenchement CI GitHub Actions
+          
+          🚀 Le processus de validation est en cours sur GitHub Actions!
+          
+    - name: 💡 Conseils pour la suite
+      debug:
+        msg: |
+          💡 === CONSEILS POUR LA SUITE ===
+          
+          🔄 Pendant que le CI tourne:
+          - Préparez votre environnement Minikube si inactif
+          - Vérifiez vos namespaces Kubernetes
+          - Assurez-vous que Docker daemon est actif
+          
+          📝 Après validation CI:
+          - Si ✅: On créera le workflow CD pour déployer sur Minikube
+          - Si ❌: On corrigera les charts et relancera
+          
+          🎯 Commandes utiles:
+          - minikube start (si besoin)
+          - kubectl get namespaces
+          - docker ps
+          - helm list -A

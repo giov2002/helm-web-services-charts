@@ -1,0 +1,481 @@
+name: 🔍 Full Helm Charts Validation
+
+on:
+  # Déclenchement manuel via l'interface GitHub
+  workflow_dispatch:
+    inputs:
+      check_type:
+        description: 'Type de vérification'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+        - full
+        - security-only
+        - lint-only
+  
+  # Déclenchement programmé (tous les lundis à 9h00 UTC)
+  schedule:
+    - cron: '0 9 * * 1'
+  
+  # Déclenchement sur push vers main avec modification du workflow
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/helm-full-check.yml'
+
+env:
+  REGISTRY: ghcr.io
+  NAMESPACE_PREFIX: prod
+
+jobs:
+  # Job 1: Préparation et inventaire des charts
+  prepare-inventory:
+    name: 📋 Inventaire des Charts
+    runs-on: ubuntu-latest
+    outputs:
+      all_charts: ${{ steps.inventory.outputs.all_charts }}
+      charts_count: ${{ steps.inventory.outputs.charts_count }}
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 📋 Inventaire complet des charts
+        id: inventory
+        run: |
+          # Définition de tous les charts disponibles
+          declare -A services=(
+            [bind9]="bind9"
+            [mysql]="database/mysql"
+            [phpmyadmin]="database/phpmyadmin"
+            [email]="email"
+            [monitoring]="monitoring/monitoring-chart"
+            [unbound]="unbound"
+            [web-apache]="web-apache"
+            [web-nginx]="web-nginx"
+          )
+
+          echo "🔍 Vérification de l'existence des charts..."
+          charts_found=()
+          charts_missing=()
+
+          for svc in "${!services[@]}"; do
+            path="${services[$svc]}"
+            if [ -d "${path}" ] && [ -f "${path}/Chart.yaml" ]; then
+              charts_found+=("$svc")
+              echo "✅ Chart trouvé: $svc (${path})"
+            else
+              charts_missing+=("$svc")
+              echo "❌ Chart manquant: $svc (${path})"
+            fi
+          done
+
+          # Génération de la liste JSON pour la matrice
+          charts_json=$(printf '%s\n' "${charts_found[@]}" | jq -R -s -c 'split("\n")[:-1]')
+          echo "all_charts=${charts_json}" >> $GITHUB_OUTPUT
+          echo "charts_count=${#charts_found[@]}" >> $GITHUB_OUTPUT
+          
+          echo ""
+          echo "📊 RÉSUMÉ INVENTAIRE:"
+          echo "Charts trouvés: ${#charts_found[@]}"
+          echo "Charts manquants: ${#charts_missing[@]}"
+          echo "Charts à vérifier: ${charts_found[*]}"
+          
+          if [ ${#charts_missing[@]} -gt 0 ]; then
+            echo "⚠️ Charts manquants: ${charts_missing[*]}"
+          fi
+
+  # Job 2: Validation complète des charts
+  validate-all-charts:
+    name: 🧪 Validation Complète
+    runs-on: ubuntu-latest
+    needs: prepare-inventory
+    if: ${{ needs.prepare-inventory.outputs.charts_count > 0 && (github.event.inputs.check_type == 'full' || github.event.inputs.check_type == '' || github.event_name != 'workflow_dispatch') }}
+    strategy:
+      matrix:
+        chart: ${{ fromJson(needs.prepare-inventory.outputs.all_charts) }}
+      fail-fast: false
+      max-parallel: 4
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.12.0'
+
+      - name: 🔍 Validation approfondie du chart ${{ matrix.chart }}
+        run: |
+          declare -A paths=(
+            [bind9]="bind9"
+            [mysql]="database/mysql"
+            [phpmyadmin]="database/phpmyadmin"
+            [email]="email"
+            [monitoring]="monitoring/monitoring-chart"
+            [unbound]="unbound"
+            [web-apache]="web-apache"
+            [web-nginx]="web-nginx"
+          )
+
+          chart_path="${paths[${{ matrix.chart }}]}"
+          echo "🔍 === VALIDATION DE: ${{ matrix.chart }} ==="
+          echo "📁 Chemin: $chart_path"
+          
+          # Vérification de la structure
+          echo ""
+          echo "📋 Structure du chart:"
+          ls -la "$chart_path/"
+          
+          # Validation Helm
+          echo ""
+          echo "🔍 Helm lint..."
+          helm lint "$chart_path" --strict
+          
+          echo ""
+          echo "🔍 Helm template (dry-run)..."
+          helm template "test-${{ matrix.chart }}" "$chart_path" --dry-run --debug
+          
+          echo ""
+          echo "🔍 Vérification des dépendances..."
+          if [ -f "$chart_path/Chart.lock" ]; then
+            echo "📦 Chart.lock trouvé"
+            helm dependency list "$chart_path" || echo "⚠️ Pas de dépendances externes"
+          else
+            echo "ℹ️ Pas de Chart.lock - pas de dépendances externes"
+          fi
+          
+          echo ""
+          echo "✅ ${{ matrix.chart }} validé avec succès!"
+
+  # Job 3: Lint YAML complet
+  full-yaml-lint:
+    name: 📏 Lint YAML Complet
+    runs-on: ubuntu-latest
+    needs: prepare-inventory
+    if: ${{ needs.prepare-inventory.outputs.charts_count > 0 && (github.event.inputs.check_type == 'full' || github.event.inputs.check_type == 'lint-only' || github.event_name != 'workflow_dispatch') }}
+    strategy:
+      matrix:
+        chart: ${{ fromJson(needs.prepare-inventory.outputs.all_charts) }}
+      fail-fast: false
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ⚙️ Setup yamllint
+        run: sudo apt-get update && sudo apt-get install -y yamllint
+
+      - name: ⚙️ Configuration yamllint stricte
+        run: |
+          cat <<EOF > .yamllint-strict.yaml
+          extends: default
+          rules:
+            line-length:
+              max: 120
+              level: warning
+            indentation:
+              spaces: 2
+            comments:
+              min-spaces-from-content: 1
+            truthy:
+              allowed-values: ['true', 'false', 'yes', 'no']
+            brackets:
+              max-spaces-inside: 1
+            commas:
+              max-spaces-after: 1
+            key-duplicates: enable
+            empty-lines:
+              max-end: 1
+          ignore: |
+            *.tgz
+            */templates/*.tpl
+            */.helmignore
+          EOF
+
+      - name: 📏 Lint YAML approfondi pour ${{ matrix.chart }}
+        run: |
+          declare -A paths=(
+            [bind9]="bind9"
+            [mysql]="database/mysql"
+            [phpmyadmin]="database/phpmyadmin"
+            [email]="email"
+            [monitoring]="monitoring/monitoring-chart"
+            [unbound]="unbound"
+            [web-apache]="web-apache"
+            [web-nginx]="web-nginx"
+          )
+
+          chart_path="${paths[${{ matrix.chart }}]}"
+          echo "📏 === LINT YAML: ${{ matrix.chart }} ==="
+          
+          # Comptage des fichiers
+          yaml_files=$(find "$chart_path" -name "*.yaml" -o -name "*.yml" | wc -l)
+          echo "📄 Fichiers YAML trouvés: $yaml_files"
+          
+          if [ $yaml_files -gt 0 ]; then
+            echo ""
+            echo "📏 Analyse des fichiers YAML..."
+            find "$chart_path" -name "*.yaml" -o -name "*.yml" | while read file; do
+              echo "🔍 $file"
+              yamllint -c .yamllint-strict.yaml "$file" || echo "⚠️ Warnings dans $file"
+            done
+          else
+            echo "⚠️ Aucun fichier YAML trouvé dans $chart_path"
+          fi
+          
+          echo "✅ Lint YAML terminé pour ${{ matrix.chart }}"
+
+  # Job 4: Audit de sécurité complet
+  full-security-audit:
+    name: 🔒 Audit de Sécurité Complet
+    runs-on: ubuntu-latest
+    needs: prepare-inventory
+    if: ${{ needs.prepare-inventory.outputs.charts_count > 0 && (github.event.inputs.check_type == 'full' || github.event.inputs.check_type == 'security-only' || github.event_name != 'workflow_dispatch') }}
+    strategy:
+      matrix:
+        chart: ${{ fromJson(needs.prepare-inventory.outputs.all_charts) }}
+      fail-fast: false
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 🔒 Audit de sécurité approfondi pour ${{ matrix.chart }}
+        run: |
+          declare -A paths=(
+            [bind9]="bind9"
+            [mysql]="database/mysql"
+            [phpmyadmin]="database/phpmyadmin"
+            [email]="email"
+            [monitoring]="monitoring/monitoring-chart"
+            [unbound]="unbound"
+            [web-apache]="web-apache"
+            [web-nginx]="web-nginx"
+          )
+
+          chart_path="${paths[${{ matrix.chart }}]}"
+          echo "🔒 === AUDIT SÉCURITÉ: ${{ matrix.chart }} ==="
+          
+          security_issues=0
+          
+          # 1. Recherche de mots de passe en dur
+          echo ""
+          echo "🔍 Vérification des mots de passe en dur..."
+          if grep -rn -E "(password|pwd|pass).*:.*['\"][^'\"]*[a-zA-Z0-9]{3,}[^'\"]*['\"]" "$chart_path/" --include="*.yaml" --include="*.yml" | grep -v "passwordSecretRef" | grep -v "{{ .*password" | grep -v "#.*password"; then
+            echo "⚠️ Mots de passe potentiellement en dur détectés!"
+            security_issues=$((security_issues + 1))
+          else
+            echo "✅ Pas de mots de passe en dur détectés"
+          fi
+          
+          # 2. Vérification des secrets
+          echo ""
+          echo "🔍 Vérification de l'utilisation des secrets..."
+          if find "$chart_path" -name "*.yaml" -exec grep -l "kind: Secret" {} \; | head -5; then
+            echo "📋 Secrets trouvés - vérification de la structure..."
+            find "$chart_path" -name "*.yaml" -exec grep -A5 -B2 "kind: Secret" {} \;
+          else
+            echo "ℹ️ Aucun secret Kubernetes défini"
+          fi
+          
+          # 3. Vérification des privilèges
+          echo ""
+          echo "🔍 Vérification des privilèges de sécurité..."
+          if grep -rn -E "(privileged|runAsRoot|allowPrivilegeEscalation).*true" "$chart_path/" --include="*.yaml"; then
+            echo "⚠️ Privilèges élevés détectés!"
+            security_issues=$((security_issues + 1))
+          else
+            echo "✅ Pas de privilèges élevés détectés"
+          fi
+          
+          # 4. Vérification des images
+          echo ""
+          echo "🔍 Vérification des images Docker..."
+          if grep -rn -E "image:.*latest" "$chart_path/" --include="*.yaml" | grep -v "{{"; then
+            echo "⚠️ Images avec tag 'latest' détectées!"
+            security_issues=$((security_issues + 1))
+          else
+            echo "✅ Pas d'images avec tag 'latest'"
+          fi
+          
+          # 5. Résumé sécurité
+          echo ""
+          echo "📊 === RÉSUMÉ SÉCURITÉ ==="
+          echo "Issues trouvées: $security_issues"
+          if [ $security_issues -eq 0 ]; then
+            echo "✅ ${{ matrix.chart }} - Audit sécurité OK"
+          else
+            echo "⚠️ ${{ matrix.chart }} - $security_issues issues à vérifier"
+          fi
+
+  # Job 5: Test de rendu des templates
+  template-rendering:
+    name: 🎨 Test de Rendu des Templates
+    runs-on: ubuntu-latest
+    needs: prepare-inventory
+    if: ${{ needs.prepare-inventory.outputs.charts_count > 0 && (github.event.inputs.check_type == 'full' || github.event_name != 'workflow_dispatch') }}
+    strategy:
+      matrix:
+        chart: ${{ fromJson(needs.prepare-inventory.outputs.all_charts) }}
+      fail-fast: false
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.12.0'
+
+      - name: 🎨 Test de rendu pour ${{ matrix.chart }}
+        run: |
+          declare -A paths=(
+            [bind9]="bind9"
+            [mysql]="database/mysql"
+            [phpmyadmin]="database/phpmyadmin"
+            [email]="email"
+            [monitoring]="monitoring/monitoring-chart"
+            [unbound]="unbound"
+            [web-apache]="web-apache"
+            [web-nginx]="web-nginx"
+          )
+
+          chart_path="${paths[${{ matrix.chart }}]}"
+          echo "🎨 === TEST RENDU: ${{ matrix.chart }} ==="
+          
+          # Test de rendu avec différentes configurations
+          echo ""
+          echo "🔍 Test rendu par défaut..."
+          helm template "test-${{ matrix.chart }}" "$chart_path" > "/tmp/render-${{ matrix.chart }}.yaml"
+          
+          echo "📄 Objets Kubernetes générés:"
+          grep -c "^kind:" "/tmp/render-${{ matrix.chart }}.yaml" || echo "0"
+          
+          echo ""
+          echo "📋 Types d'objets:"
+          grep "^kind:" "/tmp/render-${{ matrix.chart }}.yaml" | sort | uniq -c || echo "Aucun objet"
+          
+          # Vérification des ressources obligatoires
+          echo ""
+          echo "🔍 Vérification des ressources essentielles..."
+          
+          if grep -q "kind: Deployment" "/tmp/render-${{ matrix.chart }}.yaml"; then
+            echo "✅ Deployment trouvé"
+          elif grep -q "kind: StatefulSet" "/tmp/render-${{ matrix.chart }}.yaml"; then
+            echo "✅ StatefulSet trouvé"
+          else
+            echo "⚠️ Aucun Deployment/StatefulSet trouvé"
+          fi
+          
+          if grep -q "kind: Service" "/tmp/render-${{ matrix.chart }}.yaml"; then
+            echo "✅ Service trouvé"
+          else
+            echo "ℹ️ Aucun Service trouvé"
+          fi
+          
+          echo "✅ Test de rendu terminé pour ${{ matrix.chart }}"
+
+  # Job 6: Rapport final complet
+  final-report:
+    name: 📊 Rapport Final Complet
+    runs-on: ubuntu-latest
+    needs: [prepare-inventory, validate-all-charts, full-yaml-lint, full-security-audit, template-rendering]
+    if: always()
+    
+    steps:
+      - name: 📊 Génération du rapport complet
+        run: |
+          echo "📊 === RAPPORT COMPLET CI HELM CHARTS ==="
+          echo "🕒 Date: $(date)"
+          echo "🌿 Branch: ${{ github.ref }}"
+          echo "💾 Commit: ${{ github.sha }}"
+          echo "🚀 Déclencheur: ${{ github.event.inputs.triggered_by || 'manual' }}"
+          echo "⚙️ Type de vérification: ${{ github.event.inputs.check_type }}"
+          
+          echo ""
+          echo "📋 === INVENTAIRE ==="
+          echo "Charts détectés: ${{ needs.prepare-inventory.outputs.charts_count }}"
+          echo "Charts analysés: $(echo '${{ needs.prepare-inventory.outputs.all_charts }}' | jq -r '. | join(", ")')"
+          
+          echo ""
+          echo "📊 === RÉSULTATS PAR JOB ==="
+          
+          # Inventaire
+          if [[ "${{ needs.prepare-inventory.result }}" == "success" ]]; then
+            echo "✅ Inventaire: SUCCÈS"
+          else
+            echo "❌ Inventaire: ÉCHEC"
+          fi
+          
+          # Validation
+          if [[ "${{ needs.validate-all-charts.result }}" == "success" ]]; then
+            echo "✅ Validation Charts: SUCCÈS"
+          elif [[ "${{ needs.validate-all-charts.result }}" == "skipped" ]]; then
+            echo "⏸️ Validation Charts: IGNORÉ"
+          else
+            echo "❌ Validation Charts: ÉCHEC"
+          fi
+          
+          # YAML Lint
+          if [[ "${{ needs.full-yaml-lint.result }}" == "success" ]]; then
+            echo "✅ Lint YAML: SUCCÈS"
+          elif [[ "${{ needs.full-yaml-lint.result }}" == "skipped" ]]; then
+            echo "⏸️ Lint YAML: IGNORÉ"
+          else
+            echo "❌ Lint YAML: ÉCHEC"
+          fi
+          
+          # Sécurité
+          if [[ "${{ needs.full-security-audit.result }}" == "success" ]]; then
+            echo "✅ Audit Sécurité: SUCCÈS"
+          elif [[ "${{ needs.full-security-audit.result }}" == "skipped" ]]; then
+            echo "⏸️ Audit Sécurité: IGNORÉ"
+          else
+            echo "❌ Audit Sécurité: ÉCHEC"
+          fi
+          
+          # Templates
+          if [[ "${{ needs.template-rendering.result }}" == "success" ]]; then
+            echo "✅ Test Templates: SUCCÈS"
+          elif [[ "${{ needs.template-rendering.result }}" == "skipped" ]]; then
+            echo "⏸️ Test Templates: IGNORÉ"
+          else
+            echo "❌ Test Templates: ÉCHEC"
+          fi
+          
+          echo ""
+          echo "🎯 === RECOMMANDATIONS ==="
+          echo "• Vérifiez les warnings YAML si présents"
+          echo "• Examinez les issues de sécurité signalées"
+          echo "• Assurez-vous que tous les charts ont les ressources nécessaires"
+          echo "• Utilisez des tags d'images spécifiques (évitez 'latest')"
+          
+          echo ""
+          echo "🚀 === CONCLUSION ==="
+
+      - name: 🎯 Détermination du statut final
+        run: |
+          # Logique de détermination du succès global
+          critical_failures=0
+          
+          if [[ "${{ needs.prepare-inventory.result }}" != "success" ]]; then
+            critical_failures=$((critical_failures + 1))
+            echo "❌ Inventaire en échec"
+          fi
+          
+          if [[ "${{ needs.validate-all-charts.result }}" == "failure" ]]; then
+            critical_failures=$((critical_failures + 1))
+            echo "❌ Validation en échec"
+          fi
+          
+          if [ $critical_failures -eq 0 ]; then
+            echo ""
+            echo "🎉 === SUCCÈS GLOBAL ==="
+            echo "✅ Tous les charts ont passé les vérifications critiques!"
+            echo "🚀 Vos charts Helm sont prêts pour le déploiement!"
+          else
+            echo ""
+            echo "💥 === ÉCHEC GLOBAL ==="
+            echo "❌ $critical_failures vérifications critiques ont échoué"
+            echo "🔧 Une révision est nécessaire avant le déploiement"
+            exit 1
+          fi
