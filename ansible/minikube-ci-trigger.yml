@@ -128,7 +128,6 @@
               ref: "{{ github.branch }}"
               inputs:
                 check_type: "{{ check_type }}"
-                triggered_by: "ansible"
             status_code: 204
           register: workflow_dispatch
           
@@ -152,7 +151,7 @@
           📊 === RAPPORT CI MINIKUBE ===
           
           🏗️ Environnement:
-          - Plateforme: {{ environment.platform }}
+          - Plateforme: {{ project_environment.platform }}
           - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
           - Kubernetes: Minikube {{ '(actif)' if minikube_status.rc == 0 else '(inactif)' }}
           

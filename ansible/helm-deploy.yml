@@ -1,0 +1,346 @@
+name: 🚀 Helm Charts Deployment (CD)
+
+on:
+  # Déclenchement manuel via l'interface GitHub
+  workflow_dispatch:
+    inputs:
+      deployment_type:
+        description: 'Type de déploiement'
+        required: true
+        default: 'single-service'
+        type: choice
+        options:
+        - single-service
+        - full-stack
+        - priority-based
+      
+      target_service:
+        description: 'Service à déployer (si single-service)'
+        required: false
+        default: 'bind9'
+        type: choice
+        options:
+        - bind9
+        - unbound
+        - mysql
+        - phpmyadmin
+        - web-apache
+        - web-nginx
+        - email
+        - monitoring
+      
+      environment:
+        description: 'Environnement cible'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - prod
+      
+      force_recreate:
+        description: 'Forcer la recréation des ressources'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NAMESPACE_PREFIX: dev
+  KUBECONFIG_PATH: /tmp/kubeconfig
+
+jobs:
+  # Job 1: Préparation de l'environnement
+  prepare-deployment:
+    name: 📋 Préparation Déploiement
+    runs-on: self-hosted  # Votre machine Debian avec Minikube
+    outputs:
+      services_to_deploy: ${{ steps.planning.outputs.services_to_deploy }}
+      deployment_order: ${{ steps.planning.outputs.deployment_order }}
+      target_namespace: ${{ steps.planning.outputs.target_namespace }}
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 🔍 Vérification de l'environnement
+        run: |
+          echo "🏗️ === VÉRIFICATION ENVIRONNEMENT ==="
+          echo "OS: $(lsb_release -d | cut -f2)"
+          echo "Docker: $(docker --version)"
+          echo "Minikube: $(minikube version --short)"
+          echo "Kubectl: $(kubectl version --client --short)"
+          echo "Helm: $(helm version --short)"
+          
+          # Vérification Minikube actif
+          if ! minikube status > /dev/null 2>&1; then
+            echo "❌ Minikube n'est pas actif"
+            echo "Démarrage de Minikube..."
+            minikube start --driver=docker --memory=4096 --cpus=2
+          else
+            echo "✅ Minikube actif"
+          fi
+          
+          # Configuration kubectl
+          minikube update-context
+          kubectl cluster-info
+
+      - name: 📋 Planification du déploiement
+        id: planning
+        run: |
+          # Définition des services et priorités
+          declare -A services=(
+            [bind9]="1:dns"
+            [unbound]="1:dns" 
+            [mysql]="2:database"
+            [phpmyadmin]="3:database"
+            [web-apache]="2:web"
+            [web-nginx]="2:web"
+            [email]="4:email"
+            [monitoring]="5:monitoring"
+          )
+          
+          # Définition des dépendances
+          declare -A dependencies=(
+            [phpmyadmin]="mysql"
+            [email]="mysql"
+            [monitoring]="mysql"
+          )
+          
+          deployment_type="${{ github.event.inputs.deployment_type }}"
+          target_service="${{ github.event.inputs.target_service }}"
+          environment="${{ github.event.inputs.environment }}"
+          
+          echo "🎯 Type de déploiement: $deployment_type"
+          echo "🎯 Service cible: $target_service"
+          echo "🎯 Environnement: $environment"
+          
+          # Génération de la liste des services à déployer
+          if [[ "$deployment_type" == "single-service" ]]; then
+            services_list="[\"$target_service\"]"
+            order_list="[\"$target_service\"]"
+          elif [[ "$deployment_type" == "full-stack" ]]; then
+            services_list='["bind9","unbound","mysql","phpmyadmin","web-apache","web-nginx","email","monitoring"]'
+            order_list='["bind9","unbound","mysql","web-apache","web-nginx","phpmyadmin","email","monitoring"]'
+          else
+            # Priority-based
+            services_list='["bind9","unbound","mysql","web-apache","web-nginx","phpmyadmin","email","monitoring"]'
+            order_list='["bind9","unbound","mysql","web-apache","web-nginx","phpmyadmin","email","monitoring"]'
+          fi
+          
+          echo "services_to_deploy=${services_list}" >> $GITHUB_OUTPUT
+          echo "deployment_order=${order_list}" >> $GITHUB_OUTPUT
+          echo "target_namespace=${environment}" >> $GITHUB_OUTPUT
+          
+          echo "📦 Services à déployer: $services_list"
+          echo "📊 Ordre de déploiement: $order_list"
+
+  # Job 2: Création des namespaces
+  setup-namespaces:
+    name: 🏗️ Setup Namespaces
+    runs-on: self-hosted
+    needs: prepare-deployment
+    
+    steps:
+      - name: 🏗️ Création des namespaces
+        run: |
+          namespaces=("dns" "database" "web" "email" "monitoring")
+          env="${{ needs.prepare-deployment.outputs.target_namespace }}"
+          
+          for ns in "${namespaces[@]}"; do
+            full_ns="${env}-${ns}"
+            echo "🔧 Création/Vérification namespace: $full_ns"
+            
+            kubectl create namespace "$full_ns" --dry-run=client -o yaml | kubectl apply -f -
+            kubectl label namespace "$full_ns" environment="$env" --overwrite
+            kubectl label namespace "$full_ns" managed-by="helm-cd" --overwrite
+          done
+          
+          echo "📋 Namespaces disponibles:"
+          kubectl get namespaces -l managed-by=helm-cd
+
+  # Job 3: Déploiement des services
+  deploy-services:
+    name: 🚀 Déploiement Services
+    runs-on: self-hosted
+    needs: [prepare-deployment, setup-namespaces]
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.prepare-deployment.outputs.services_to_deploy) }}
+      fail-fast: false
+      max-parallel: 2
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 🚀 Déploiement ${{ matrix.service }}
+        run: |
+          # Mapping service → chart path
+          declare -A paths=(
+            [bind9]="bind9:dns"
+            [unbound]="unbound:dns"
+            [mysql]="database/mysql:database"
+            [phpmyadmin]="database/phpmyadmin:database"
+            [web-apache]="web-apache:web"
+            [web-nginx]="web-nginx:web"
+            [email]="email:email"
+            [monitoring]="monitoring/monitoring-chart:monitoring"
+          )
+          
+          service="${{ matrix.service }}"
+          IFS=':' read -ra path_info <<< "${paths[$service]}"
+          chart_path="${path_info[0]}"
+          namespace_suffix="${path_info[1]}"
+          
+          env="${{ needs.prepare-deployment.outputs.target_namespace }}"
+          namespace="${env}-${namespace_suffix}"
+          release_name="${env}-${service}"
+          
+          echo "🚀 === DÉPLOIEMENT DE $service ==="
+          echo "📁 Chart: $chart_path"
+          echo "🏷️ Namespace: $namespace"
+          echo "🏷️ Release: $release_name"
+          
+          # Vérification de l'existence du chart
+          if [[ ! -f "$chart_path/Chart.yaml" ]]; then
+            echo "❌ Chart.yaml non trouvé dans $chart_path"
+            exit 1
+          fi
+          
+          # Configuration des values selon l'environnement
+          values_args=""
+          if [[ -f "$chart_path/values-${env}.yaml" ]]; then
+            values_args="--values $chart_path/values-${env}.yaml"
+            echo "📄 Utilisation de values-${env}.yaml"
+          fi
+          
+          # Déploiement avec Helm
+          if [[ "${{ github.event.inputs.force_recreate }}" == "true" ]]; then
+            echo "🔄 Suppression de la release existante..."
+            helm uninstall "$release_name" -n "$namespace" --ignore-not-found
+          fi
+          
+          echo "🔧 Installation/Mise à jour..."
+          helm upgrade --install "$release_name" "$chart_path" \
+            --namespace "$namespace" \
+            --create-namespace \
+            --wait \
+            --timeout 300s \
+            $values_args \
+            --set environment="$env" \
+            --set nameOverride="$service" \
+            --atomic
+          
+          # Vérification du déploiement
+          echo "🔍 Vérification du déploiement..."
+          helm status "$release_name" -n "$namespace"
+          
+          echo "📋 Resources déployées:"
+          kubectl get all -n "$namespace" -l app.kubernetes.io/instance="$release_name"
+          
+          echo "✅ $service déployé avec succès!"
+
+  # Job 4: Tests post-déploiement
+  post-deployment-tests:
+    name: 🧪 Tests Post-Déploiement
+    runs-on: self-hosted
+    needs: [prepare-deployment, deploy-services]
+    if: always()
+    
+    steps:
+      - name: 🧪 Tests de santé des services
+        run: |
+          env="${{ needs.prepare-deployment.outputs.target_namespace }}"
+          services_json='${{ needs.prepare-deployment.outputs.services_to_deploy }}'
+          
+          echo "🧪 === TESTS POST-DÉPLOIEMENT ==="
+          
+          # Vérification des pods
+          echo "🔍 Vérification des pods..."
+          for namespace in $(kubectl get namespaces -l managed-by=helm-cd -o name | cut -d/ -f2); do
+            echo "📋 Namespace: $namespace"
+            kubectl get pods -n "$namespace" -o wide
+          done
+          
+          # Vérification des services
+          echo ""
+          echo "🔍 Vérification des services..."
+          for namespace in $(kubectl get namespaces -l managed-by=helm-cd -o name | cut -d/ -f2); do
+            echo "📋 Services dans $namespace:"
+            kubectl get svc -n "$namespace"
+          done
+          
+          # Tests de connectivité basiques
+          echo ""
+          echo "🔍 Tests de connectivité..."
+          failed_tests=0
+          
+          # Test DNS (si bind9 ou unbound déployés)
+          if echo "$services_json" | grep -q "bind9\|unbound"; then
+            echo "🧪 Test DNS..."
+            if kubectl get pods -l app=bind9 -A | grep -q Running; then
+              echo "✅ Bind9 is running"
+            else
+              echo "⚠️ Bind9 test failed"
+              failed_tests=$((failed_tests + 1))
+            fi
+          fi
+          
+          # Test base de données (si mysql déployé)
+          if echo "$services_json" | grep -q "mysql"; then
+            echo "🧪 Test MySQL..."
+            if kubectl get pods -l app=mysql -A | grep -q Running; then
+              echo "✅ MySQL is running"
+            else
+              echo "⚠️ MySQL test failed"
+              failed_tests=$((failed_tests + 1))
+            fi
+          fi
+          
+          echo ""
+          if [[ $failed_tests -eq 0 ]]; then
+            echo "✅ Tous les tests post-déploiement ont réussi!"
+          else
+            echo "⚠️ $failed_tests tests ont échoué"
+          fi
+
+  # Job 5: Rapport final
+  deployment-report:
+    name: 📊 Rapport de Déploiement
+    runs-on: self-hosted
+    needs: [prepare-deployment, deploy-services, post-deployment-tests]
+    if: always()
+    
+    steps:
+      - name: 📊 Génération du rapport final
+        run: |
+          echo "📊 === RAPPORT FINAL DE DÉPLOIEMENT ==="
+          echo "🕒 Date: $(date)"
+          echo "🏗️ Environnement: ${{ needs.prepare-deployment.outputs.target_namespace }}"
+          echo "🎯 Type: ${{ github.event.inputs.deployment_type }}"
+          echo "📦 Services: ${{ needs.prepare-deployment.outputs.services_to_deploy }}"
+          
+          echo ""
+          echo "📊 === STATUTS DES JOBS ==="
+          echo "Préparation: ${{ needs.prepare-deployment.result }}"
+          echo "Déploiement: ${{ needs.deploy-services.result }}"
+          echo "Tests: ${{ needs.post-deployment-tests.result }}"
+          
+          echo ""
+          echo "🔍 === ÉTAT FINAL DU CLUSTER ==="
+          helm list -A
+          
+          echo ""
+          echo "🎯 === ACCÈS AUX SERVICES ==="
+          echo "Dashboard Minikube: minikube dashboard"
+          echo "Port-forward exemple: kubectl port-forward svc/service-name 8080:80 -n namespace"
+          
+          # Détermination du succès global
+          if [[ "${{ needs.deploy-services.result }}" == "success" ]]; then
+            echo ""
+            echo "🎉 === DÉPLOIEMENT RÉUSSI ==="
+            echo "✅ Tous les services sont déployés et fonctionnels!"
+          else
+            echo ""
+            echo "💥 === DÉPLOIEMENT PARTIELLEMENT ÉCHOUÉ ==="
+            echo "⚠️ Vérifiez les logs des services en échec"
+          fi

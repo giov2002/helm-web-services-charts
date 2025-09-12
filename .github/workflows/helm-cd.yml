@@ -1,0 +1,51 @@
+name: Helm Continuous Deployment
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # Permet de déclencher manuellement
+
+# Dépendance : s'exécute uniquement si le CI (helm-full-check.yml) passe
+jobs:
+  deploy-charts:
+    runs-on: ubuntu-latest
+    needs: helm-lint  # Dépend du job helm-lint du CI (à ajuster selon votre helm-full-check.yml)
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4  # Version stable de Helm
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.5  # Version compatible avec Minikube
+
+      - name: Configure Minikube
+        run: |
+          minikube start --driver=docker
+          minikube kubectl -- get nodes
+          eval $(minikube docker-env)
+
+      - name: Install Charts
+        env:
+          KUBECONFIG: ~/.kube/config
+        run: |
+          # Installer chaque chart dans son namespace
+          helm install mysql ./database/mysql --namespace mysql --create-namespace
+          helm install phpmyadmin ./database/phpmyadmin --namespace phpmyadmin --create-namespace
+          helm install monitoring ./monitoring/monitoring-chart --namespace monitoring --create-namespace
+          helm install web-apache ./web-apache --namespace web-apache --create-namespace
+          helm install web-nginx ./web-nginx --namespace web-nginx --create-namespace
+          helm install unbound ./unbound --namespace unbound --create-namespace
+          helm install email ./email --namespace email --create-namespace
+          helm install bind9 ./bind9 --namespace bind9 --create-namespace
+
+      - name: Verify Deployments
+        run: |
+          kubectl get pods --all-namespaces
+          kubectl get services --all-namespaces

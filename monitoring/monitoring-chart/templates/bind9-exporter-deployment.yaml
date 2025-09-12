@@ -18,6 +18,7 @@ spec:
       containers:
       - name: bind9-exporter
         image: "{{ .Values.bind9.image.repository }}:{{ .Values.bind9.image.tag }}"
+        imagePullPolicy: {{ .Values.bind9.image.pullPolicy }}
         ports:
         - containerPort: {{ .Values.bind9.service.port }}
         env:

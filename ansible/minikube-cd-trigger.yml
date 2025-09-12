@@ -1,0 +1,197 @@
+---
+# Playbook Ansible pour déclencher CD Helm dans un environnement Minikube
+
+- name: 🚀 Déclencheur CD Helm - Déploiement Minikube
+  hosts: localhost
+  gather_facts: yes
+  vars_files:
+    - ansible-minikube-config.yml
+  
+  vars:
+    # Paramètres par défaut (overridables)
+    deployment_type: "{{ deployment_type | default('single-service') }}"
+    target_service: "{{ target_service | default('bind9') }}"
+    environment: "{{ environment | default('dev') }}"
+    force_recreate: "{{ force_recreate | default(false) }}"
+    github_owner: "{{ github.owner }}"
+    github_repo: "{{ github.repo }}"
+    github_token: "{{ github_pat | default(ansible_env.GITHUB_PAT) }}"
+    
+  pre_tasks:
+    - name: 📋 Vérification de l'environnement de déploiement
+      block:
+        - name: 🔍 Vérifier Minikube
+          command: minikube status
+          register: minikube_status
+          failed_when: false
+          changed_when: false
+          
+        - name: ❌ Échec si Minikube inactif
+          fail:
+            msg: |
+              ❌ Minikube n'est pas actif!
+              
+              Le déploiement nécessite Minikube en cours d'exécution.
+              
+              Solutions:
+              1. Démarrer Minikube: minikube start --driver=docker --memory=4096 --cpus=2
+              2. Vérifier le statut: minikube status
+              3. Relancer le déploiement
+          when: minikube_status.rc != 0
+          
+        - name: 📊 Statut environnement
+          debug:
+            msg: |
+              🎯 Environnement de déploiement:
+              - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+              - Minikube: Actif
+              - Architecture: {{ ansible_architecture }}
+              - Type de déploiement: {{ deployment_type }}
+              - Service cible: {{ target_service }}
+              - Environnement: {{ environment }}
+
+  tasks:
+    - name: 🔐 Validation des prérequis CD
+      block:
+        - name: 🔑 Vérifier le token GitHub
+          fail:
+            msg: |
+              ❌ Token GitHub manquant pour le déploiement!
+              
+              Le CD nécessite l'accès à GitHub Actions.
+              
+              Solutions:
+              1. Variable d'environnement: export GITHUB_PAT="your_token"
+              2. Paramètre Ansible: -e github_pat="your_token"
+              
+              Token requis avec scopes: repo, workflow
+          when: github_token is not defined or github_token == ""
+          
+        - name: 📡 Test de connectivité GitHub
+          uri:
+            url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}"
+            headers:
+              Authorization: "token {{ github_token }}"
+              Accept: "application/vnd.github.v3+json"
+            method: GET
+          register: github_test
+
+    - name: 📦 Validation du service cible
+      block:
+        - name: ✅ Vérifier que le service existe
+          fail:
+            msg: |
+              ❌ Service '{{ target_service }}' non reconnu!
+              
+              Services disponibles:
+              {% for service in services.keys() %}
+              - {{ service }} ({{ services[service].path }})
+              {% endfor %}
+          when: 
+            - deployment_type == "single-service"
+            - target_service not in services.keys()
+            
+        - name: 📋 Informations du service
+          debug:
+            msg: |
+              📦 Service à déployer:
+              - Nom: {{ target_service }}
+              - Path: {{ services[target_service].path }}
+              - Namespace: {{ services[target_service].namespace }}
+              - Priorité: {{ services[target_service].priority }}
+              {% if services[target_service].dependencies %}
+              - Dépendances: {{ services[target_service].dependencies | join(', ') }}
+              {% endif %}
+          when: deployment_type == "single-service"
+
+    - name: 🚀 Déclenchement du CD GitHub Actions
+      block:
+        - name: 📝 Paramètres de déploiement
+          debug:
+            msg: |
+              🎯 Déclenchement CD avec les paramètres:
+              - Type: {{ deployment_type }}
+              - Service: {{ target_service }}
+              - Environnement: {{ environment }}
+              - Force recreate: {{ force_recreate }}
+              - Workflow: helm-deploy.yml
+              
+        - name: 🚀 Lancement du workflow de déploiement
+          uri:
+            url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}/actions/workflows/helm-deploy.yml/dispatches"
+            method: POST
+            headers:
+              Authorization: "token {{ github_token }}"
+              Accept: "application/vnd.github.v3+json"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              ref: "{{ github.branch }}"
+              inputs:
+                deployment_type: "{{ deployment_type }}"
+                target_service: "{{ target_service }}"
+                environment: "{{ environment }}"
+                force_recreate: "{{ force_recreate | string | lower }}"
+            status_code: 204
+          register: workflow_dispatch
+          
+        - name: ✅ CD déclenché avec succès
+          debug:
+            msg: |
+              🎉 Déploiement Helm déclenché avec succès!
+              
+              📋 Prochaines étapes:
+              1. 🌐 Suivez le déploiement: https://github.com/{{ github_owner }}/{{ github_repo }}/actions
+              2. ⏳ Temps estimé: 5-15 minutes selon les services
+              3. 🎯 Une fois terminé, vérifiez: minikube dashboard
+              4. 🔍 Vérification locale: kubectl get pods -A
+              
+              🔄 Pour redéployer: ansible-playbook ansible/minikube-cd-trigger.yml -e deployment_type={{ deployment_type }} -e target_service={{ target_service }}
+
+  post_tasks:
+    - name: 📊 Rapport de lancement CD
+      debug:
+        msg: |
+          📊 === RAPPORT LANCEMENT CD ===
+          
+          🏗️ Environnement:
+          - Plateforme: {{ project_environment.platform }}
+          - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - Kubernetes: Minikube (actif)
+          
+          🎯 Déploiement configuré:
+          - Type: {{ deployment_type }}
+          {% if deployment_type == "single-service" %}
+          - Service: {{ target_service }}
+          {% else %}
+          - Services: Tous les services configurés
+          {% endif %}
+          - Environnement: {{ environment }}
+          
+          🚀 Actions réalisées:
+          - ✅ Validation environnement Minikube
+          - ✅ Test connectivité GitHub
+          - ✅ Validation du service cible
+          - ✅ Déclenchement workflow CD
+          
+          📱 Le déploiement est en cours sur GitHub Actions!
+          
+    - name: 💡 Commandes utiles post-déploiement
+      debug:
+        msg: |
+          💡 === COMMANDES UTILES ===
+          
+          📊 Surveillance du déploiement:
+          - minikube dashboard
+          - kubectl get pods -A
+          - kubectl get svc -A
+          - helm list -A
+          
+          🔍 Debug en cas de problème:
+          - kubectl describe pod POD_NAME -n NAMESPACE
+          - kubectl logs POD_NAME -n NAMESPACE
+          - helm status RELEASE_NAME -n NAMESPACE
+          
+          🔄 Gestion des déploiements:
+          - kubectl port-forward svc/SERVICE_NAME PORT:PORT -n NAMESPACE
+          - helm rollback RELEASE_NAME REVISION -n NAMESPACE

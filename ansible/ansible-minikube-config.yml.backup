@@ -1,22 +1,22 @@
 # Configuration Ansible pour projet Minikube + Helm
 # Structure adaptée à votre environnement Debian 12 + Minikube
 
-# Configuration de l'environnement
+# Configuration de l'environnement (renommé pour éviter conflit)
 project_environment:
   platform: "minikube"
   host_os: "debian12"
   kubernetes_context: "minikube"
   namespace_prefix: "dev"
 
-# Configuration GitHub (pour CI/CD)
+# Configuration GitHub (pour CI)
 github:
+  # À modifier selon votre repo
   owner: "giov2002"
-  repo: "helm-web-services-charts"
+  repo: "helm-web-services-charts"  # ou le nom de votre repo
   branch: "main"
 
-# Token GitHub (géré par variable d'environnement pour sécurité)
 github_pat: "{{ ansible_env.GITHUB_PAT | default('') }}"
-
+  
 # Services disponibles dans votre stack
 services:
   # DNS/Network
@@ -25,6 +25,7 @@ services:
     namespace: "dns"
     priority: 1
     dependencies: []
+
     
   unbound:
     path: "unbound" 
@@ -32,7 +33,7 @@ services:
     priority: 1
     dependencies: []
     
-  # Database
+  # Database (détectés dans votre structure)
   mysql:
     path: "database/mysql"
     namespace: "database"
@@ -65,24 +66,18 @@ services:
     priority: 4
     dependencies: ["mysql"]
 
-  # Monitoring
-  monitoring:
-    path: "monitoring/monitoring-chart"
-    namespace: "monitoring"
-    priority: 5
-    dependencies: ["mysql"]
-
 # Configuration Minikube
 minikube:
-  driver: "docker"
+  driver: "docker"  # ou "virtualbox" selon votre config
   memory: "4096"
   cpus: "2"
-  kubernetes_version: "v1.28.0"
+  kubernetes_version: "v1.28.0"  # adaptez selon votre version
   
 # Chemins importants
 paths:
   helm_charts: "."
   ansible_playbooks: "./ansible"
+  docker_files: "./web-services/docker"
   
 # Configuration CI/CD
 ci_cd:
@@ -96,17 +91,9 @@ ci_cd:
       - "security_audit"
       - "template_render"
       
-  # CD - Déploiement sur Minikube
-  cd:
-    workflow: "helm-deploy.yml"
-    target: "minikube"
-    deployment_strategy: "rolling"
-    rollback_enabled: true
-    environments:
-      - "dev"
-      - "staging"
-      - "prod"
-    deployment_types:
-      - "single-service"
-      - "full-stack"
-      - "priority-based"
+  # CD - Déploiement sur Minikube (à créer)
+  #cd:
+   # workflow: "helm-deploy.yml"  # futur workflow
+    #target: "minikube"
+    #deployment_strategy: "rolling"
+    #rollback_enabled: true

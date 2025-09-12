@@ -8,8 +8,13 @@ mysqlRootPassword: "MotDePasseFort"
 
 # Optionnels : création auto au démarrage
 mysqlDatabase: ""
-mysqlUser: "root"  # Ajoute l'utilisateur ici
-mysqlPassword: "MotDePasseFort"  # Ajoute le mot de passe ici pour la cohérence
+# SUPPRIMEZ ou COMMENTEZ ces deux lignes problématiques :
+# mysqlUser: "root"
+# mysqlPassword: "MotDePasseFort"
+
+# OU créez un utilisateur régulier à la place :
+mysqlUser: "appuser"  # Nom d'utilisateur régulier
+mysqlPassword: "MotDePasseFort"
 
 service:
   type: ClusterIP
@@ -18,7 +23,7 @@ service:
 persistence:
   enabled: true
   accessMode: ReadWriteOnce
-  storageClass: "standard"   # "" => StorageClass par défaut de Minikube
+  storageClass: "standard"
   size: 1Gi
 
 resources:

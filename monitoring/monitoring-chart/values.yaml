@@ -59,7 +59,7 @@ grafana:
 
 nginx:
   service:
-    name: my-nginx-web-nginx
+    name: web-nginx-web-nginx
     namespace: web-nginx
     port: 8080
 
@@ -83,3 +83,9 @@ bind9:
     requests:
       cpu: 100m
       memory: 64Mi
+# Configuration pour Unbound DNS monitoring
+unbound:
+  service:
+    name: unbound  # Selon votre convention de nommage
+    namespace: unbound
+    port: 53
