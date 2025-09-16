@@ -393,7 +393,6 @@ jobs:
          sudo apt install -y python3-pip
          pip3 install --upgrade pip
          pip3 install ansible kubernetes
-         /opt/pipx/venvs/ansible-core/bin/pip install kubernetes  # Installe dans l'environnement pipx
          ansible-galaxy collection install kubernetes.core:2.4.0
       - name: ⚙️ Install Helm Diff plugin
         run: |
@@ -413,7 +412,6 @@ jobs:
          kubectl get pods --all-namespaces
          kubectl get services --all-namespaces
          kubectl get namespaces
-
   # Job 7: Rapport final complet
   final-report:
     name: 📊 Rapport Final Complet
