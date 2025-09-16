@@ -389,27 +389,30 @@ jobs:
 
       - name: ⚙️ Install Ansible and dependencies
         run: |
-          sudo apt update
-          pip install kubernetes
-          ansible-galaxy collection install kubernetes.core:2.4.0
-
+         sudo apt update
+         sudo apt install -y python3-pip
+         pip3 install --upgrade pip
+         pip3 install ansible kubernetes
+         /opt/pipx/venvs/ansible-core/bin/pip install kubernetes  # Installe dans l'environnement pipx
+         ansible-galaxy collection install kubernetes.core:2.4.0
+      - name: ⚙️ Install Helm Diff plugin
+        run: |
+         helm plugin install https://github.com/databus23/helm-diff --version v3.9.11
       - name: 🚀 Start Minikube
         run: |
-          minikube start --driver=docker --cpus=4 --memory=8192
-          eval $(minikube docker-env)
-
+         minikube start --driver=docker --cpus=4 --memory=8192
+         eval $(minikube docker-env)
       - name: 🚀 Run Ansible Playbook
         run: |
-          cd ansible
-          ansible-playbook minikube-cd-trigger.yml
+         cd ansible
+         ansible-playbook minikube-cd-deploy.yml -e "ansible_python_interpreter=/usr/bin/python3"
         env:
-          GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
-
+         GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
       - name: ✅ Verify deployments
         run: |
-          kubectl get pods --all-namespaces
-          kubectl get services --all-namespaces
-          kubectl get namespaces
+         kubectl get pods --all-namespaces
+         kubectl get services --all-namespaces
+         kubectl get namespaces
 
   # Job 7: Rapport final complet
   final-report:
