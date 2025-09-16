@@ -390,7 +390,7 @@ jobs:
       - name: ⚙️ Install Ansible and dependencies
         run: |
           sudo apt update
-          sudo apt install python3-kubernetes -y
+          pip install kubernetes
           ansible-galaxy collection install kubernetes.core:2.4.0
 
       - name: 🚀 Start Minikube
