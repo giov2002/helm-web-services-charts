@@ -401,7 +401,7 @@ jobs:
       - name: 🚀 Run Ansible Playbook
         run: |
           cd ansible
-          ansible-playbook minikube-cd-deploy.yml
+          ansible-playbook minikube-cd-trigger.yml
         env:
           GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
 

@@ -67,15 +67,14 @@ nginx:
 # Configuration de bind9-exporter
 bind9:
   image:
-    repository: ubuntu/bind9
+    repository: prometheuscommunity/bind-exporter
     tag: "latest"
     pullPolicy: IfNotPresent
-  # Hôte et port du service Bind9 à surveiller
-  bind9Host: "localhost"  # Adresse du serveur Bind9
-  bind9Port: 53           # Port de Bind9
+  bind9Host: "bind9.bind9.svc.cluster.local"
+  bind9Port: "53"
   service:
     type: ClusterIP
-    port: 9119             # Port où les métriques sont exposées
+    port: 9119
   resources:
     limits:
       cpu: 200m
@@ -89,3 +88,20 @@ unbound:
     name: unbound  # Selon votre convention de nommage
     namespace: unbound
     port: 53
+unboundExporter:
+  image:
+    repository: python
+    tag: "3.9-alpine"
+    pullPolicy: IfNotPresent
+  unboundHost: "unbound.unbound.svc.cluster.local"
+  unboundPort: "8953"
+  service:
+    type: ClusterIP
+    port: 9167
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 100m
+      memory: 64Mi

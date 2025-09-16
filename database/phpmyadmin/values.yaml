@@ -5,7 +5,7 @@ image:
   pullPolicy: IfNotPresent
 
 mysql:
-  host: "mysql"      # DOIT pointer vers le Service MySQL (ex: "mydb")
+  host: "mysql.mysql.svc.cluster.local"      # DOIT pointer vers le Service MySQL (ex: "mydb")
   port: 3306
   # Optionnels (on préfère saisir dans l'UI) :
   # username: "root"

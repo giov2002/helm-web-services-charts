@@ -26,10 +26,15 @@ data:
       static_configs:
       - targets:
         - 'bind9-exporter.monitoring.svc.cluster.local:9119'  # Modification uniquement ici
+    
     - job_name: 'unbound-exporter'
       static_configs:
       - targets:
-        - '{{ .Values.unbound.service.name }}.{{ .Values.unbound.service.namespace }}:{{ .Values.unbound.service.port }}'
+        - '{{ include "monitoring.fullname" . }}-unbound-exporter:9167'
+      scrape_interval: 30s
+      metrics_path: /metrics
+
+
     - job_name: 'kube-state-metrics'
       static_configs:
       - targets:
