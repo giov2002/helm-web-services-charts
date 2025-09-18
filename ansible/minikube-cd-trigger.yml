@@ -9,10 +9,10 @@
   
   vars:
     # Paramètres par défaut (overridables)
-    deployment_type: "{{ deployment_type | default('single-service') }}"
-    target_service: "{{ target_service | default('bind9') }}"
-    environment: "{{ environment | default('dev') }}"
-    force_recreate: "{{ force_recreate | default(false) }}"
+    _deployment_type: "{{ deployment_type | default('single-service') }}"
+    _target_service: "{{ target_service | default('bind9') }}"
+    _environment: "{{ environment | default('dev') }}"
+    _force_recreate: "{{ force_recreate | default(false) }}"
     github_owner: "{{ github.owner }}"
     github_repo: "{{ github.repo }}"
     github_token: "{{ github_pat | default(ansible_env.GITHUB_PAT) }}"
@@ -46,9 +46,9 @@
               - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
               - Minikube: Actif
               - Architecture: {{ ansible_architecture }}
-              - Type de déploiement: {{ deployment_type }}
-              - Service cible: {{ target_service }}
-              - Environnement: {{ environment }}
+              - Type de déploiement: {{ _deployment_type }}
+              - Service cible: {{ _target_service }}
+              - Environnement: {{ _environment }}
 
   tasks:
     - name: 🔐 Validation des prérequis CD
@@ -81,72 +81,87 @@
         - name: ✅ Vérifier que le service existe
           fail:
             msg: |
-              ❌ Service '{{ target_service }}' non reconnu!
+              ❌ Service '{{ _target_service }}' non reconnu!
               
               Services disponibles:
               {% for service in services.keys() %}
               - {{ service }} ({{ services[service].path }})
               {% endfor %}
           when: 
-            - deployment_type == "single-service"
-            - target_service not in services.keys()
+            - _deployment_type == "single-service"
+            - _target_service not in services.keys()
             
         - name: 📋 Informations du service
           debug:
             msg: |
               📦 Service à déployer:
-              - Nom: {{ target_service }}
-              - Path: {{ services[target_service].path }}
-              - Namespace: {{ services[target_service].namespace }}
-              - Priorité: {{ services[target_service].priority }}
-              {% if services[target_service].dependencies %}
-              - Dépendances: {{ services[target_service].dependencies | join(', ') }}
+              - Nom: {{ _target_service }}
+              - Path: {{ services[_target_service].path }}
+              - Namespace: {{ services[_target_service].namespace }}
+              - Priorité: {{ services[_target_service].priority }}
+              {% if services[_target_service].dependencies %}
+              - Dépendances: {{ services[_target_service].dependencies | join(', ') }}
               {% endif %}
-          when: deployment_type == "single-service"
+          when: _deployment_type == "single-service"
 
-    - name: 🚀 Déclenchement du CD GitHub Actions
+    - name: 🚀 Déploiement automatique Helm
       block:
         - name: 📝 Paramètres de déploiement
           debug:
             msg: |
-              🎯 Déclenchement CD avec les paramètres:
-              - Type: {{ deployment_type }}
-              - Service: {{ target_service }}
-              - Environnement: {{ environment }}
-              - Force recreate: {{ force_recreate }}
-              - Workflow: helm-deploy.yml
+              🎯 Déploiement automatique avec les paramètres:
+              - Type: {{ _deployment_type }}
+              - Service: {{ _target_service }}
+              - Environnement: {{ _environment }}
+              - Force recreate: {{ _force_recreate }}
               
-        - name: 🚀 Lancement du workflow de déploiement
-          uri:
-            url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}/actions/workflows/helm-deploy.yml/dispatches"
-            method: POST
-            headers:
-              Authorization: "token {{ github_token }}"
-              Accept: "application/vnd.github.v3+json"
-              Content-Type: "application/json"
-            body_format: json
-            body:
-              ref: "{{ github.branch }}"
-              inputs:
-                deployment_type: "{{ deployment_type }}"
-                target_service: "{{ target_service }}"
-                environment: "{{ environment }}"
-                force_recreate: "{{ force_recreate | string | lower }}"
-            status_code: 204
-          register: workflow_dispatch
+        - name: 🗂️ Changement vers le répertoire du service
+          shell: pwd
+          register: current_dir
+          changed_when: false
           
-        - name: ✅ CD déclenché avec succès
+        - name: 🚀 Installation Helm du service
+          shell: |
+            cd {{ services[_target_service].path }}
+            helm upgrade --install {{ _target_service }} . \
+              -n {{ services[_target_service].namespace }} \
+              --create-namespace \
+              {{ '--force' if _force_recreate else '' }}
+          register: helm_deploy
+          when: _deployment_type == "single-service"
+          
+        - name: 🚀 Installation Helm de tous les services
+          shell: |
+            cd {{ item.value.path }}
+            helm upgrade --install {{ item.key }} . \
+              -n {{ item.value.namespace }} \
+              --create-namespace \
+              {{ '--force' if _force_recreate else '' }}
+          loop: "{{ services | dict2items }}"
+          register: helm_deploy_all
+          when: _deployment_type == "full-stack"
+          
+        - name: ✅ Déploiement terminé
           debug:
             msg: |
-              🎉 Déploiement Helm déclenché avec succès!
+              🎉 Déploiement Helm terminé avec succès!
               
-              📋 Prochaines étapes:
-              1. 🌐 Suivez le déploiement: https://github.com/{{ github_owner }}/{{ github_repo }}/actions
-              2. ⏳ Temps estimé: 5-15 minutes selon les services
-              3. 🎯 Une fois terminé, vérifiez: minikube dashboard
-              4. 🔍 Vérification locale: kubectl get pods -A
+              📋 Vérifications:
+              - kubectl get pods -n {{ services[_target_service].namespace }}
+              - kubectl get svc -n {{ services[_target_service].namespace }}
+              - helm status {{ _target_service }} -n {{ services[_target_service].namespace }}
+          when: _deployment_type == "single-service"
+          
+        - name: ✅ Déploiement complet terminé
+          debug:
+            msg: |
+              🎉 Déploiement complet terminé!
               
-              🔄 Pour redéployer: ansible-playbook ansible/minikube-cd-trigger.yml -e deployment_type={{ deployment_type }} -e target_service={{ target_service }}
+              📋 Vérifications:
+              - kubectl get pods -A
+              - kubectl get svc -A
+              - helm list -A
+          when: _deployment_type == "full-stack"
 
   post_tasks:
     - name: 📊 Rapport de lancement CD
@@ -160,13 +175,13 @@
           - Kubernetes: Minikube (actif)
           
           🎯 Déploiement configuré:
-          - Type: {{ deployment_type }}
-          {% if deployment_type == "single-service" %}
-          - Service: {{ target_service }}
+          - Type: {{ _deployment_type }}
+          {% if _deployment_type == "single-service" %}
+          - Service: {{ _target_service }}
           {% else %}
           - Services: Tous les services configurés
           {% endif %}
-          - Environnement: {{ environment }}
+          - Environnement: {{ _environment }}
           
           🚀 Actions réalisées:
           - ✅ Validation environnement Minikube
@@ -174,7 +189,7 @@
           - ✅ Validation du service cible
           - ✅ Déclenchement workflow CD
           
-          📱 Le déploiement est en cours sur GitHub Actions!
+          📱 Le déploiement automatique est terminé!
           
     - name: 💡 Commandes utiles post-déploiement
       debug:

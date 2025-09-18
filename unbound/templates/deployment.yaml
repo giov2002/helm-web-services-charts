@@ -21,36 +21,36 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       containers:
-      - name: unbound
-        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
-        imagePullPolicy: {{ .Values.image.pullPolicy }}
-        ports:
-        - containerPort: {{ .Values.containerPort }}
-          name: dns-udp
-          protocol: UDP
-        - containerPort: {{ .Values.containerPort }}
-          name: dns-tcp
-          protocol: TCP
-        volumeMounts:
-        - name: unbound-config
-          mountPath: /opt/unbound/etc/unbound/
-          readOnly: true
-        readinessProbe:
-          tcpSocket:
-            port: dns-tcp
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        livenessProbe:
-          tcpSocket:
-            port: dns-tcp
-          initialDelaySeconds: 15
-          periodSeconds: 20
-        resources:
-          {{- toYaml .Values.resources | nindent 10 }}
+        - name: unbound
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.containerPort }}
+              name: dns-udp
+              protocol: UDP
+            - containerPort: {{ .Values.containerPort }}
+              name: dns-tcp
+              protocol: TCP
+          volumeMounts:
+            - name: unbound-config
+              mountPath: /opt/unbound/etc/unbound/
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: dns-tcp
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: dns-tcp
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
       volumes:
-      - name: unbound-config
-        configMap:
-          name: {{ include "unbound.fullname" . }}-config
+        - name: unbound-config
+          configMap:
+            name: {{ include "unbound.fullname" . }}-config
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

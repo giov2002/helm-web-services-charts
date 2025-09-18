@@ -22,29 +22,7 @@ data:
       qname-minimisation: yes
       num-threads: 1
       so-rcvbuf: 1m
-      # Configuration pour les statistiques et monitoring
-      statistics-interval: 300
-      extended-statistics: yes
-      statistics-cumulative: yes
-      # Interface de contrôle pour l'exporteur
-      control-enable: yes
-      control-interface: 0.0.0.0
-      control-port: 8953
-      # Configuration de logging pour debugging
-      verbosity: 1
-      log-queries: no
-      log-replies: no
-      # Autres configurations DNS
-      cache-min-ttl: 0
-      cache-max-ttl: 86400
-      prefetch-key: yes
       {{- range .Values.localRecords }}
       local-zone: "{{ .name }}." static
       local-data: "{{ .name }}. 60 IN A {{ .ip }}"
       {{- end }}
-
-    remote-control:
-      control-enable: yes
-      control-interface: 0.0.0.0
-      control-port: 8953
-      control-use-cert: no
