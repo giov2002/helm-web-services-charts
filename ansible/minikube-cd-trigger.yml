@@ -1,0 +1,58 @@
+
+---
+- name: Trigger GitHub Actions CD Deployment
+  hosts: localhost
+  gather_facts: no
+  vars:
+    github_owner: "giov2002"
+    github_repo: "helm-web-services-charts"
+    github_branch: "main"
+    workflow_file: "helm-cd-deploy.yml"
+    github_token: "{{ lookup('env', 'GITHUB_PAT') }}"
+  tasks:
+    - name: Verify GitHub token
+      fail:
+        msg: "GitHub token required. Set: export GITHUB_PAT='your_token'"
+      when: github_token == ""
+    - name: Test GitHub connectivity
+      uri:
+        url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}"
+        headers:
+          Authorization: "token {{ github_token }}"
+        method: GET
+      register: github_test
+    - name: Display repo info
+      debug:
+        msg: |
+          Connected to GitHub repository:
+          - Repo: {{ github_test.json.full_name }}
+          - Visibility: {{ github_test.json.visibility }}
+          - Last updated: {{ github_test.json.updated_at }}
+    - name: Trigger GitHub Actions CD Workflow
+      uri:
+        url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}/actions/workflows/{{ workflow_file }}/dispatches"
+        method: POST
+        headers:
+          Authorization: "token {{ github_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          ref: "{{ github_branch }}"
+          inputs:
+            deploy_type: "full"
+        status_code: 204
+    - name: CD Deployment triggered successfully
+      debug:
+        msg: |
+          CD Deployment triggered on GitHub Actions!
+          
+          What happens next:
+          1. GitHub Actions will start a Minikube instance
+          2. It will run your minikube-cd-deploy.yml playbook
+          3. All charts will be deployed on GitHub's Minikube
+          4. You can see the deployment logs on GitHub Actions
+          
+          Check deployment status:
+          https://github.com/{{ github_owner }}/{{ github_repo }}/actions
+          
+          The deployment will be visible in the "Deployment CD Minikube" job logs.
