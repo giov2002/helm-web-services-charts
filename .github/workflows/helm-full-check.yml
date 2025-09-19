@@ -368,55 +368,12 @@ jobs:
           
           echo "✅ Test de rendu terminé pour ${{ matrix.chart }}"
 
-  # Job 6: Déploiement des charts via Ansible
-  deploy-charts:
-    name: 🚀 Déploiement des Charts
-    runs-on: ubuntu-latest
-    needs: [prepare-inventory, validate-all-charts, template-rendering]
-    if: ${{ needs.prepare-inventory.outputs.charts_count > 0 && (github.event.inputs.check_type == 'full' || github.event.inputs.check_type == 'deploy-only' || github.event_name == 'push' || github.event_name == 'schedule') }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: ⚙️ Setup Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: '3.15.4'
-
-      - name: ⚙️ Setup kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: 'v1.33.1'
-
-      - name: ⚙️ Install Ansible and dependencies
-        run: |
-         sudo apt update
-         sudo apt install -y python3-pip
-         pip3 install --upgrade pip
-         pip3 install ansible kubernetes
-         ansible-galaxy collection install kubernetes.core:2.4.0
-      - name: ⚙️ Install Helm Diff plugin
-        run: |
-         helm plugin install https://github.com/databus23/helm-diff --version v3.9.11
-      - name: 🚀 Start Minikube
-        run: |
-         minikube start --driver=docker --cpus=4 --memory=8192
-         eval $(minikube docker-env)
-      - name: 🚀 Run Ansible Playbook
-        run: |
-         cd ansible
-         ansible-playbook minikube-cd-deploy.yml -e "ansible_python_interpreter=/usr/bin/python3"
-        env:
-         GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
-      - name: ✅ Verify deployments
-        run: |
-         kubectl get pods --all-namespaces
-         kubectl get services --all-namespaces
-         kubectl get namespaces
+ 
   # Job 7: Rapport final complet
   final-report:
     name: 📊 Rapport Final Complet
     runs-on: ubuntu-latest
-    needs: [prepare-inventory, validate-all-charts, full-yaml-lint, full-security-audit, template-rendering, deploy-charts]
+    needs: [prepare-inventory, validate-all-charts, full-yaml-lint, full-security-audit, template-rendering]
     if: always()
     
     steps:

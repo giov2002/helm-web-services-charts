@@ -1,113 +1,77 @@
 ---
-- name: 🚀 Déclencheur CI Helm - Projet Minikube
+- name: Deploy Helm Charts to Minikube
   hosts: localhost
-  gather_facts: yes
-  vars_files:
-    - ansible-minikube-config.yml
-  
   vars:
-    check_type: "{{ check_type | default('full') }}"
-    github_owner: "{{ github.owner }}"
-    github_repo: "{{ github.repo }}"
-    github_token: "{{ github_pat | default(ansible_env.GITHUB_PAT) }}"
-    
-    # Charts selon votre structure
-    chart_list:
-      - bind9
-      - mysql
-      - phpmyadmin
-      - email
-      - monitoring
-      - unbound
-      - web-apache
-      - web-nginx
-    
-  pre_tasks:
-    - name: 📋 Vérification de l'environnement
-      debug:
-        msg: |
-          🎯 Environnement CI:
-          - OS: {{ ansible_distribution }}
-          - Check type: {{ check_type }}
-          - Charts: {{ chart_list | length }} détectés
-
-    - name: 🔍 Vérifier Minikube
+    charts:
+      - name: mysql
+        path: ../database/mysql
+        namespace: mysql
+      - name: phpmyadmin
+        path: ../database/phpmyadmin
+        namespace: phpmyadmin
+      - name: monitoring
+        path: ../monitoring/monitoring-chart
+        namespace: monitoring
+      - name: web-apache
+        path: ../web-apache
+        namespace: web-apache
+      - name: web-nginx
+        path: ../web-nginx
+        namespace: web-nginx
+      - name: unbound
+        path: ../unbound
+        namespace: unbound
+      - name: email
+        path: ../email
+        namespace: email-stack
+      - name: bind9
+        path: ../bind9
+        namespace: bind9
+  tasks:
+    - name: Check Minikube status
       command: minikube status
       register: minikube_status
-      failed_when: false
       changed_when: false
-
-    - name: 📊 Statut environnement
+      failed_when: "'host: Running' not in minikube_status.stdout"
+      
+    - name: Set Minikube Docker environment
+      shell: |
+        source <(minikube docker-env)
+      args:
+        executable: /bin/bash
+      changed_when: false
+      
+    - name: Create namespaces
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: "{{ item.namespace }}"
+        state: present
+        definition:
+          metadata:
+            labels:
+              app.kubernetes.io/managed-by: Helm
+            annotations:
+              meta.helm.sh/release-name: "{{ item.name }}"
+              meta.helm.sh/release-namespace: "{{ item.namespace }}"
+      loop: "{{ charts }}"
+      
+    - name: Deploy Helm charts
+      kubernetes.core.helm:
+        name: "{{ item.name }}"
+        chart_ref: "{{ item.path }}"
+        namespace: "{{ item.namespace }}"
+        state: present
+        create_namespace: true
+      loop: "{{ charts }}"
+      
+    - name: Verify deployments
+      command: kubectl get pods --namespace {{ item.namespace }}
+      loop: "{{ charts }}"
+      register: pod_status
+      changed_when: false
+      
+    - name: Display pod status
       debug:
-        msg: |
-          📊 Status:
-          - Minikube: {{ 'Actif' if minikube_status.rc == 0 else 'Inactif' }}
-          - GitHub Repo: {{ github_owner }}/{{ github_repo }}
-
-  tasks:
-    - name: 📦 Vérification rapide des charts
-      stat:
-        path: "{{ item }}/Chart.yaml"
-      register: charts_check
-      loop:
-        - ./bind9
-        - ./database/mysql
-        - ./database/phpmyadmin
-        - ./email
-        - ./monitoring/monitoring-chart
-        - ./unbound
-        - ./web-apache
-        - ./web-nginx
-
-    - name: 📊 Résumé validation charts
-      debug:
-        msg: |
-          📊 Charts validation:
-          - Valides: {{ charts_check.results | selectattr('stat.exists') | list | length }}
-          - Total: {{ charts_check.results | length }}
-
-    - name: 🔐 Vérification GitHub token
-      fail:
-        msg: |
-          ❌ Token GitHub requis!
-          Export: export GITHUB_PAT="your_token"
-          Ou: -e github_pat="your_token"
-      when: github_token is not defined or github_token == ""
-
-    - name: 📡 Test connectivité GitHub
-      uri:
-        url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}"
-        headers:
-          Authorization: "token {{ github_token }}"
-          Accept: "application/vnd.github.v3+json"
-        method: GET
-      register: github_test
-
-    - name: 🚀 Déclenchement CI GitHub Actions
-      uri:
-        url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}/actions/workflows/{{ ci_cd.ci.workflow }}/dispatches"
-        method: POST
-        headers:
-          Authorization: "token {{ github_token }}"
-          Accept: "application/vnd.github.v3+json"
-          Content-Type: "application/json"
-        body_format: json
-        body:
-          ref: "{{ github.branch }}"
-          inputs:
-            check_type: "{{ check_type }}"
-        status_code: 204
-      register: workflow_dispatch
-
-    - name: ✅ CI déclenché
-      debug:
-        msg: |
-          🎉 CI GitHub Actions déclenché!
-          
-          🌐 Suivi: https://github.com/{{ github_owner }}/{{ github_repo }}/actions
-          ⏳ Temps estimé: 5-10 minutes
-          
-          📝 Prochaines étapes:
-          1. Attendre validation CI
-          2. Si OK → ansible-playbook ansible/minikube-cd-deploy.yml
-          3. Si KO → Corriger et relancer
+        msg: "{{ item.stdout_lines }}"
+      loop: "{{ pod_status.results }}"
