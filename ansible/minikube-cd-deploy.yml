@@ -1,74 +1,73 @@
 ---
-- name: 🚀 Deploy Helm Charts to Minikube
+- name: Deploy Helm Charts to Minikube
   hosts: localhost
   gather_facts: yes
   
   vars:
-    # Chemins CORRIGÉS - depuis le répertoire racine du projet
     charts:
       - name: mysql
-        path: ../database/mysql           # CORRIGÉ: ./ au lieu de ../
+        path: ../database/mysql
         namespace: mysql
         priority: 1
         
       - name: phpmyadmin
-        path: ../database/phpmyadmin      # CORRIGÉ: ./ au lieu de ../
+        path: ../database/phpmyadmin
         namespace: phpmyadmin
         priority: 2
         
       - name: bind9
-        path: ../bind9                    # CORRIGÉ: ./ au lieu de ../
+        path: ../bind9
         namespace: bind9
         priority: 3
         
       - name: unbound
-        path: ../unbound                  # CORRIGÉ: ./ au lieu de ../
+        path: ../unbound
         namespace: unbound
         priority: 4
         
       - name: web-apache
-        path: ../web-apache               # CORRIGÉ: ./ au lieu de ../
+        path: ../web-apache
         namespace: web-apache
         priority: 5
         
       - name: web-nginx
-        path: ../web-nginx                # CORRIGÉ: ./ au lieu de ../
+        path: ../web-nginx
         namespace: web-nginx
         priority: 6
         
       - name: email
-        path: ../email                    # CORRIGÉ: ./ au lieu de ../
+        path: ../email
         namespace: email-stack
         priority: 7
         
       - name: monitoring
-        path: ../monitoring/monitoring-chart  # CORRIGÉ: ./ au lieu de ../
+        path: ../monitoring/monitoring-chart
         namespace: monitoring
         priority: 8
 
   pre_tasks:
-    - name: 📋 Informations de déploiement
+    - name: Informations de deploiement
       debug:
         msg: |
-          🎯 Démarrage du déploiement Helm Charts
-          - Répertoire de travail: {{ ansible_env.PWD }}
+          Demarrage du deploiement Helm Charts
+          - Repertoire de travail: {{ ansible_env.PWD }}
           - Playbook depuis: {{ playbook_dir }}
           - Nombre de charts: {{ charts | length }}
 
   tasks:
-    - name: 🔍 Check Minikube status
+    - name: Check Minikube status
       command: minikube status
       register: minikube_status
       changed_when: false
       failed_when: "'host: Running' not in minikube_status.stdout"
 
-    - name: ✅ Minikube status OK
+    - name: Minikube status OK
       debug:
         msg: |
-          ✅ Minikube est actif et prêt
+          Minikube est actif et pret
           {{ minikube_status.stdout_lines | join('\n') }}
 
-    - name: 🐳 Set Minikube Docker environment
+    - name: Set Minikube Docker environment
       shell: |
         source <(minikube docker-env)
         echo "DOCKER_HOST=$DOCKER_HOST"
@@ -77,34 +76,34 @@
       changed_when: false
       register: docker_env
 
-    - name: ✅ Validation des chemins des charts
+    - name: Validation des chemins des charts
       stat:
         path: "{{ item.path }}/Chart.yaml"
       register: chart_validation
       loop: "{{ charts }}"
       
-    - name: ❌ Vérification des charts manquants
+    - name: Verification des charts manquants
       fail:
         msg: |
-          ❌ Chart invalide détecté: {{ item.item.name }}
-          Chemin testé: {{ item.item.path }}/Chart.yaml
-          Répertoire actuel: {{ ansible_env.PWD }}
+          Chart invalide detecte: {{ item.item.name }}
+          Chemin teste: {{ item.item.path }}/Chart.yaml
+          Repertoire actuel: {{ ansible_env.PWD }}
           
-          Vérifiez que vous exécutez depuis le bon répertoire:
+          Verifiez que vous executez depuis le bon repertoire:
           cd ~/helm-web-services-charts
           ansible-playbook ansible/minikube-cd-deploy.yml
       when: not item.stat.exists
       loop: "{{ chart_validation.results }}"
 
-    - name: 📦 Charts validés
+    - name: Charts valides
       debug:
         msg: |
-          📦 Tous les charts sont valides:
+          Tous les charts sont valides:
           {% for chart in charts %}
           - {{ chart.name }}: {{ chart.path }} → {{ chart.namespace }}
           {% endfor %}
 
-    - name: 🗂️ Create namespaces
+    - name: Create namespaces
       kubernetes.core.k8s:
         api_version: v1
         kind: Namespace
@@ -121,7 +120,7 @@
               meta.helm.sh/release-namespace: "{{ item.namespace }}"
       loop: "{{ charts }}"
 
-    - name: 🚀 Deploy Helm charts (by priority)
+    - name: Deploy Helm charts (by priority)
       kubernetes.core.helm:
         name: "{{ item.name }}"
         chart_ref: "{{ item.path }}"
@@ -133,48 +132,48 @@
       loop: "{{ charts | sort(attribute='priority') }}"
       register: helm_results
 
-    - name: 📊 Résumé des déploiements
+    - name: Resume des deploiements
       debug:
         msg: |
-          📊 Déploiements Helm:
+          Deploiements Helm:
           {% for result in helm_results.results %}
-          - {{ result.item.name }}: {{ '✅ Installé' if result.changed else '✅ Déjà à jour' }}
+          - {{ result.item.name }}: {{ 'Installe' if result.changed else 'Deja a jour' }}
           {% endfor %}
 
-    - name: ⏳ Attendre la disponibilité des pods
+    - name: Attendre la disponibilite des pods
       pause:
         seconds: 30
-        prompt: "Attente du démarrage des pods..."
+        prompt: "Attente du demarrage des pods..."
 
-    - name: 🔍 Verify deployments
+    - name: Verify deployments
       command: kubectl get pods --namespace {{ item.namespace }} -o wide
       loop: "{{ charts }}"
       register: pod_status
       changed_when: false
       failed_when: false
 
-    - name: 📊 Display pod status
+    - name: Display pod status
       debug:
         msg: |
-          📊 Pods dans {{ item.item.namespace }}:
+          Pods dans {{ item.item.namespace }}:
           {{ item.stdout_lines | join('\n') }}
       loop: "{{ pod_status.results }}"
 
   post_tasks:
-    - name: 🎉 Déploiement terminé
+    - name: Deploiement termine
       debug:
         msg: |
-          🎉 === DÉPLOIEMENT RÉUSSI ===
+          === DEPLOIEMENT REUSSI ===
           
-          📦 {{ charts | length }} charts déployés sur Minikube
-          🎯 Namespaces: {{ charts | map(attribute='namespace') | list | join(', ') }}
+          {{ charts | length }} charts deployes sur Minikube
+          Namespaces: {{ charts | map(attribute='namespace') | list | join(', ') }}
           
-          🔍 Commandes utiles:
+          Commandes utiles:
           - kubectl get pods --all-namespaces
           - kubectl get services --all-namespaces
           - minikube service list
           - minikube dashboard
           
-          📊 Monitoring:
+          Monitoring:
           kubectl port-forward -n monitoring svc/grafana 3000:3000
           kubectl port-forward -n monitoring svc/prometheus 9090:9090

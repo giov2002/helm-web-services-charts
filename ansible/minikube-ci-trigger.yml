@@ -1,77 +1,42 @@
 ---
-- name: Deploy Helm Charts to Minikube
+- name: Trigger GitHub Actions CI
   hosts: localhost
+  gather_facts: no
   vars:
-    charts:
-      - name: mysql
-        path: ../database/mysql
-        namespace: mysql
-      - name: phpmyadmin
-        path: ../database/phpmyadmin
-        namespace: phpmyadmin
-      - name: monitoring
-        path: ../monitoring/monitoring-chart
-        namespace: monitoring
-      - name: web-apache
-        path: ../web-apache
-        namespace: web-apache
-      - name: web-nginx
-        path: ../web-nginx
-        namespace: web-nginx
-      - name: unbound
-        path: ../unbound
-        namespace: unbound
-      - name: email
-        path: ../email
-        namespace: email-stack
-      - name: bind9
-        path: ../bind9
-        namespace: bind9
+    github_owner: "giov2002"
+    github_repo: "helm-web-services-charts"
+    github_branch: "main"
+    workflow_file: "helm-full-check.yml"
+    github_token: "{{ lookup('env', 'GITHUB_PAT') }}"
+    
   tasks:
-    - name: Check Minikube status
-      command: minikube status
-      register: minikube_status
-      changed_when: false
-      failed_when: "'host: Running' not in minikube_status.stdout"
+    - name: Verify GitHub token
+      fail:
+        msg: "GitHub token required. Set: export GITHUB_PAT='your_token'"
+      when: github_token == ""
       
-    - name: Set Minikube Docker environment
-      shell: |
-        source <(minikube docker-env)
-      args:
-        executable: /bin/bash
-      changed_when: false
+    - name: Test GitHub connectivity
+      uri:
+        url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}"
+        headers:
+          Authorization: "token {{ github_token }}"
+        method: GET
+      register: github_test
       
-    - name: Create namespaces
-      kubernetes.core.k8s:
-        api_version: v1
-        kind: Namespace
-        name: "{{ item.namespace }}"
-        state: present
-        definition:
-          metadata:
-            labels:
-              app.kubernetes.io/managed-by: Helm
-            annotations:
-              meta.helm.sh/release-name: "{{ item.name }}"
-              meta.helm.sh/release-namespace: "{{ item.namespace }}"
-      loop: "{{ charts }}"
-      
-    - name: Deploy Helm charts
-      kubernetes.core.helm:
-        name: "{{ item.name }}"
-        chart_ref: "{{ item.path }}"
-        namespace: "{{ item.namespace }}"
-        state: present
-        create_namespace: true
-      loop: "{{ charts }}"
-      
-    - name: Verify deployments
-      command: kubectl get pods --namespace {{ item.namespace }}
-      loop: "{{ charts }}"
-      register: pod_status
-      changed_when: false
-      
-    - name: Display pod status
+    - name: Trigger GitHub Actions workflow
+      uri:
+        url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}/actions/workflows/{{ workflow_file }}/dispatches"
+        method: POST
+        headers:
+          Authorization: "token {{ github_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          ref: "{{ github_branch }}"
+          inputs:
+            check_type: "full"
+        status_code: 204
+        
+    - name: Success
       debug:
-        msg: "{{ item.stdout_lines }}"
-      loop: "{{ pod_status.results }}"
+        msg: "CI triggered! Check: https://github.com/{{ github_owner }}/{{ github_repo }}/actions"

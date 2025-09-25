@@ -1,0 +1,376 @@
+
+name: 🔍 CI Infrastructure Services
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'bind9/**'
+      - 'database/**'
+      - 'mailserver/**'
+      - 'monitoring/**'
+      - 'roundcube/**'
+      - 'web-apache/**'
+      - 'web-nginx/**'
+      - 'unbound/**'
+      - 'email/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'bind9/**'
+      - 'database/**'
+      - 'mailserver/**'
+      - 'monitoring/**'
+      - 'roundcube/**'
+      - 'web-apache/**'
+      - 'web-nginx/**'
+      - 'unbound/**'
+      - 'email/**'
+  workflow_dispatch:
+    inputs:
+      check_type:
+        description: 'Type de vérification'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - security-only
+          - lint-only
+
+env:
+  REGISTRY: ghcr.io
+  NAMESPACE_PREFIX: prod
+
+jobs:
+  detect-changes:
+    name: 🔍 Détection des Changements
+    runs-on: ubuntu-latest
+    outputs:
+      charts: ${{ steps.changes.outputs.charts }}
+      bind9: ${{ steps.changes.outputs.bind9 }}
+      mysql: ${{ steps.changes.outputs.mysql }}
+      phpmyadmin: ${{ steps.changes.outputs.phpmyadmin }}
+      mailserver: ${{ steps.changes.outputs.mailserver }}
+      monitoring: ${{ steps.changes.outputs.monitoring }}
+      roundcube: ${{ steps.changes.outputs.roundcube }}
+      web-apache: ${{ steps.changes.outputs.web-apache }}
+      web-nginx: ${{ steps.changes.outputs.web-nginx }}
+      unbound: ${{ steps.changes.outputs.unbound }}
+      email: ${{ steps.changes.outputs.email }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 🔍 Vérifier l'existence des dossiers
+        run: |
+          declare -A services=(
+            ["bind9"]="bind9"
+            ["mysql"]="database/mysql"
+            ["phpmyadmin"]="database/phpmyadmin"
+            ["mailserver"]="mailserver"
+            ["monitoring"]="monitoring/monitoring-chart"
+            ["roundcube"]="roundcube"
+            ["web-apache"]="web-apache"
+            ["web-nginx"]="web-nginx"
+            ["unbound"]="unbound"
+            ["email"]="email"
+          )
+          for svc in "${!services[@]}"; do
+            if [ ! -d "${services[$svc]}" ]; then
+              echo "❌ Erreur : Dossier ${services[$svc]} manquant"
+              exit 1
+            fi
+          done
+          echo "✅ Tous les dossiers de charts existent"
+      - name: 🔍 Détecter les changements par service
+        id: changes
+        run: |
+          declare -A services=(
+            ["bind9"]="bind9"
+            ["mysql"]="database/mysql"
+            ["phpmyadmin"]="database/phpmyadmin"
+            ["mailserver"]="mailserver"
+            ["monitoring"]="monitoring/monitoring-chart"
+            ["roundcube"]="roundcube"
+            ["web-apache"]="web-apache"
+            ["web-nginx"]="web-nginx"
+            ["unbound"]="unbound"
+            ["email"]="email"
+          )
+          charts_changed=()
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch origin "${{ github.base_ref }}" --no-tags
+            diff_base="${{ github.base_ref }}"
+          else
+            diff_base="HEAD~1"
+          fi
+          for svc in "${!services[@]}"; do
+            path="${services[$svc]}"
+            if git diff --name-only "$diff_base" | grep -q "^${path}/"; then
+              echo "$svc=true" >> "$GITHUB_OUTPUT"
+              charts_changed+=("$svc")
+              echo "✅ Changements détectés dans: $svc"
+            else
+              echo "$svc=false" >> "$GITHUB_OUTPUT"
+              echo "⏸️ Aucun changement dans: $svc"
+            fi
+          done
+          charts_json=$(printf '%s\n' "${charts_changed[@]}" | jq -R -s -c 'split("\n")[:-1]')
+          echo "charts=$charts_json" >> "$GITHUB_OUTPUT"
+          echo "📋 Services à valider: ${charts_changed[*]}"
+
+  validate-charts:
+    name: 🧪 Validation des Charts
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.charts != '[]' && (github.event.inputs.check_type == 'full' || github.event.inputs.check_type == 'lint-only' || github.event_name != 'workflow_dispatch') }}
+    strategy:
+      matrix:
+        chart: ${{ fromJson(needs.detect-changes.outputs.charts) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: ⚙️ Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.12.0'
+      - name: 🔍 Validation du chart ${{ matrix.chart }}
+        run: |
+          declare -A paths=(
+            ["mysql"]="database/mysql"
+            ["phpmyadmin"]="database/phpmyadmin"
+            ["monitoring"]="monitoring/monitoring-chart"
+            ["bind9"]="bind9"
+            ["mailserver"]="mailserver"
+            ["roundcube"]="roundcube"
+            ["web-apache"]="web-apache"
+            ["web-nginx"]="web-nginx"
+            ["unbound"]="unbound"
+            ["email"]="email"
+          )
+          chart_path="${paths[${{ matrix.chart }}]}"
+          echo "🔍 Validation de: $chart_path"
+          helm lint "$chart_path" || { echo "❌ Erreurs de lint dans $chart_path"; exit 1; }
+          helm template "test-${{ matrix.chart }}" "$chart_path" --dry-run || { echo "❌ Erreurs de template dans $chart_path"; exit 1; }
+          echo "✅ ${{ matrix.chart }} validé"
+
+  lint-yaml:
+    name: 📏 Lint YAML
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.charts != '[]' && (github.event.inputs.check_type == 'full' || github.event.inputs.check_type == 'lint-only' || github.event_name != 'workflow_dispatch') }}
+    strategy:
+      matrix:
+        chart: ${{ fromJson(needs.detect-changes.outputs.charts) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: ⚙️ Setup yamllint
+        run: sudo apt-get update && sudo apt-get install -y yamllint
+      - name: ⚙️ Configuration yamllint
+        run: |
+          cat <<EOF > .yamllint.yaml
+          extends: relaxed
+          rules:
+            line-length:
+              max: 120
+            indentation:
+              spaces: 2
+            comments:
+              min-spaces-from-content: 1
+            truthy:
+              allowed-values: ["true", "false", "yes", "no"]
+            braces:
+              min-spaces-inside: 0
+              max-spaces-inside: 1
+          ignore: |
+            *.tgz
+            */templates/*.tpl
+          EOF
+      - name: 📏 Lint YAML pour ${{ matrix.chart }}
+        run: |
+          declare -A paths=(
+            ["mysql"]="database/mysql"
+            ["phpmyadmin"]="database/phpmyadmin"
+            ["monitoring"]="monitoring/monitoring-chart"
+            ["bind9"]="bind9"
+            ["mailserver"]="mailserver"
+            ["roundcube"]="roundcube"
+            ["web-apache"]="web-apache"
+            ["web-nginx"]="web-nginx"
+            ["unbound"]="unbound"
+            ["email"]="email"
+          )
+          chart_path="${paths[${{ matrix.chart }}]}"
+          echo "📏 Lint YAML dans: $chart_path"
+          if find "$chart_path" -name "*.yaml" -o -name "*.yml" | grep -q .; then
+            find "$chart_path" -name "*.yaml" -o -name "*.yml" -exec yamllint -c .yamllint.yaml {} \;
+            if [ $? -ne 0 ]; then
+              echo "⚠️ Warnings YAML détectés dans $chart_path - continuer"
+            fi
+          else
+            echo "⚠️ Aucun fichier YAML/YML trouvé dans $chart_path - skip"
+          fi
+          echo "✅ YAML lint terminé"
+
+  security-audit:
+    name: 🔒 Audit de Sécurité
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.charts != '[]' && (github.event.inputs.check_type == 'full' || github.event.inputs.check_type == 'security-only' || github.event_name != 'workflow_dispatch') }}
+    strategy:
+      matrix:
+        chart: ${{ fromJson(needs.detect-changes.outputs.charts) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: 🔒 Vérification des secrets pour ${{ matrix.chart }}
+        run: |
+          declare -A paths=(
+            ["mysql"]="database/mysql"
+            ["phpmyadmin"]="database/phpmyadmin"
+            ["monitoring"]="monitoring/monitoring-chart"
+            ["bind9"]="bind9"
+            ["mailserver"]="mailserver"
+            ["roundcube"]="roundcube"
+            ["web-apache"]="web-apache"
+            ["web-nginx"]="web-nginx"
+            ["unbound"]="unbound"
+            ["email"]="email"
+          )
+          chart_path="${paths[${{ matrix.chart }}]}"
+          echo "🔒 Audit de sécurité: $chart_path"
+          if grep -rE "password.*:.*[a-zA-Z0-9]" "$chart_path/" --include="*.yaml" --include="*.yml" --exclude="*.tpl" | grep -vE "passwordSecretRef|#[[:space:]]*|example"; then
+            echo "❌ Mots de passe en dur détectés dans $chart_path - Vérifiez manuellement"
+            exit 1
+          else
+            echo "✅ Pas de mots de passe en dur détectés dans $chart_path"
+          fi
+          echo "✅ Audit sécurité terminé"
+
+  build-docker:
+    name: 🐳 Build et Push Images Docker
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate-charts, lint-yaml, security-audit]
+    if: ${{ needs.detect-changes.outputs.charts != '[]' && github.ref == 'refs/heads/main' }}
+    strategy:
+      matrix:
+        chart: ${{ fromJson(needs.detect-changes.outputs.charts) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: 🐳 Login à GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login "${{ env.REGISTRY }}" -u "${{ github.actor }}" --password-stdin
+      - name: 🐳 Build et Push ${{ matrix.chart }}
+        run: |
+          declare -A paths=(
+            ["mysql"]="database/mysql"
+            ["phpmyadmin"]="database/phpmyadmin"
+            ["monitoring"]="monitoring/monitoring-chart"
+            ["bind9"]="bind9"
+            ["mailserver"]="mailserver"
+            ["roundcube"]="roundcube"
+            ["web-apache"]="web-apache"
+            ["web-nginx"]="web-nginx"
+            ["unbound"]="unbound"
+            ["email"]="email"
+          )
+          chart_path="${paths[${{ matrix.chart }}]}"
+          image_tag="${{ env.REGISTRY }}/giov2002/${{ matrix.chart }}:${{ github.sha }}"
+          echo "🐳 Construction de l'image: $image_tag"
+          if [ -f "$chart_path/Dockerfile" ]; then
+            docker build -t "$image_tag" "$chart_path" || { echo "❌ Échec du build Docker pour $chart_path"; exit 1; }
+            docker push "$image_tag" || { echo "❌ Échec du push Docker pour $image_tag"; exit 1; }
+            echo "✅ Image ${{ matrix.chart }} poussée vers ${{ env.REGISTRY }}"
+          else
+            echo "⚠️ Aucun Dockerfile trouvé dans $chart_path - skip"
+          fi
+
+  package-charts:
+    name: 📦 Package des Charts
+    runs-on: ubuntu-latest
+    needs: [validate-charts, lint-yaml, security-audit, build-docker]
+    if: ${{ needs.detect-changes.outputs.charts != '[]' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: ⚙️ Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.12.0'
+      - name: 📦 Package les charts modifiés
+        run: |
+          declare -A paths=(
+            ["mysql"]="database/mysql"
+            ["phpmyadmin"]="database/phpmyadmin"
+            ["monitoring"]="monitoring/monitoring-chart"
+            ["bind9"]="bind9"
+            ["mailserver"]="mailserver"
+            ["roundcube"]="roundcube"
+            ["web-apache"]="web-apache"
+            ["web-nginx"]="web-nginx"
+            ["unbound"]="unbound"
+            ["email"]="email"
+          )
+          mkdir -p artifacts
+          for chart in $(echo "${{ needs.detect-changes.outputs.charts }}" | jq -r '.[]'); do
+            chart_path="${paths[$chart]}"
+            helm package "$chart_path" --destination artifacts/ || { echo "❌ Échec du packaging pour $chart_path"; exit 1; }
+            echo "📦 $chart packagé"
+          done
+      - name: 📤 Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-charts
+          path: artifacts/*.tgz
+          retention-days: 7
+
+  notification:
+    name: 📢 Notification
+    runs-on: ubuntu-latest
+    needs: [validate-charts, lint-yaml, security-audit, build-docker, package-charts]
+    if: always()
+    steps:
+      - name: 📊 Rapport Final
+        run: |
+          echo "📊 === RAPPORT CI ==="
+          echo "Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Branch: ${{ github.ref }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Type de vérification: ${{ github.event.inputs.check_type || 'full' }}"
+          echo ""
+          if [[ "${{ needs.validate-charts.result }}" == "success" ]]; then
+            echo "✅ Validation Charts: SUCCÈS"
+          else
+            echo "❌ Validation Charts: ÉCHEC"
+          fi
+          if [[ "${{ needs.lint-yaml.result }}" == "success" ]]; then
+            echo "✅ Lint YAML: SUCCÈS"
+          else
+            echo "❌ Lint YAML: ÉCHEC"
+          fi
+          if [[ "${{ needs.security-audit.result }}" == "success" ]]; then
+            echo "✅ Audit Sécurité: SUCCÈS"
+          else
+            echo "❌ Audit Sécurité: ÉCHEC"
+          fi
+          if [[ "${{ needs.build-docker.result }}" == "success" || "${{ needs.build-docker.result }}" == "skipped" ]]; then
+            echo "✅ Build Docker: OK"
+          else
+            echo "❌ Build Docker: ÉCHEC"
+          fi
+          if [[ "${{ needs.package-charts.result }}" == "success" || "${{ needs.package-charts.result }}" == "skipped" ]]; then
+            echo "✅ Packaging: OK"
+          else
+            echo "❌ Packaging: ÉCHEC"
+          fi
+          echo ""
+          echo "🚀 CI terminé pour environnement de test!"
+      - name: 📢 Résultat final
+        run: |
+          if [[ "${{ needs.validate-charts.result }}" == "success" && "${{ needs.lint-yaml.result }}" == "success" && "${{ needs.security-audit.result }}" == "success" ]]; then
+            echo "🎉 SUCCÈS: Charts validés - Prêt pour déploiement local!"
+          else
+            echo "❌ ÉCHEC: Révision nécessaire avant déploiement"
+            exit 1
+          fi

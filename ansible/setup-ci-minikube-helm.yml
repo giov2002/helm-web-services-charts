@@ -1,0 +1,398 @@
+---
+- name: "🚀 Setup CI Minikube + Helm Project"
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars:
+    project_name: "helm-web-services-charts"
+    charts_path: "."
+    required_tools:
+      - docker
+      - minikube
+      - kubectl
+      - helm
+      - ansible
+      - git
+      - curl
+      - jq
+    expected_charts:
+      - bind9
+      - database
+      - email
+      - monitoring
+      - unbound
+      - web-apache
+      - web-nginx
+    chart_paths:
+      bind9: "bind9"
+      mysql: "database/mysql"
+      phpmyadmin: "database/phpmyadmin"
+      email: "email"
+      monitoring: "monitoring/monitoring-chart"
+      unbound: "unbound"
+      web-apache: "web-apache"
+      web-nginx: "web-nginx"
+    minikube_config:
+      driver: docker
+      memory: 4096
+      cpus: 2
+
+  tasks:
+    - name: "📋 Display setup header"
+      debug:
+        msg:
+          - "========================================="
+          - "🚀 SETUP CI MINIKUBE + HELM PROJECT"
+          - "========================================="
+          - ""
+          - "🎯 Setup pour projet: Ansible + Docker + Kubernetes + Helm + CI"
+          - "🏗️ Environnement cible: Debian 12 + Minikube"
+          - "📦 Charts détectés: 8 services (DNS, DB, Web, Email, Monitoring)"
+
+    - name: "📋 Check OS compatibility"
+      block:
+        - name: "Check if running on Debian"
+          stat:
+            path: /etc/debian_version
+          register: debian_version_file
+
+        - name: "✅ Display Debian version"
+          debug:
+            msg: "OS: Debian {{ lookup('file', '/etc/debian_version') }}"
+          when: debian_version_file.stat.exists
+
+        - name: "⚠️ Warn about OS compatibility"
+          debug:
+            msg: "Ce script est optimisé pour Debian 12"
+          when: not debian_version_file.stat.exists
+
+    - name: "📋 Check prerequisites tools"
+      block:
+        - name: "Check if required tools are installed"
+          command: "which {{ item }}"
+          register: tool_check
+          failed_when: false
+          changed_when: false
+          loop: "{{ required_tools }}"
+
+        - name: "✅ Display found tools"
+          debug:
+            msg: "{{ item.item }} trouvé: {{ item.stdout }}"
+          when: item.rc == 0
+          loop: "{{ tool_check.results }}"
+
+        - name: "❌ List missing tools"
+          debug:
+            msg: "{{ item.item }} non trouvé"
+          when: item.rc != 0
+          loop: "{{ tool_check.results }}"
+
+        - name: "❌ Fail if tools are missing"
+          fail:
+            msg: |
+              Outils manquants détectés!
+              Installez-les avec:
+              sudo apt update && sudo apt install -y {{ tool_check.results | selectattr('rc', 'equalto', 1) | map(attribute='item') | join(' ') }}
+          when: tool_check.results | selectattr('rc', 'equalto', 1) | list | length > 0
+
+    - name: "📋 Check project structure"
+      block:
+        - name: "Check for expected chart directories"
+          stat:
+            path: "{{ item }}"
+          register: chart_dirs
+          loop: "{{ expected_charts }}"
+
+        - name: "❌ List missing chart directories"
+          debug:
+            msg: "Chart manquant: {{ item.item }}"
+          when: not item.stat.exists
+          loop: "{{ chart_dirs.results }}"
+
+        - name: "❌ Fail if charts are missing"
+          fail:
+            msg: |
+              Charts manquants détectés!
+              Assurez-vous d'être dans le répertoire racine du projet helm-web-services-charts
+          when: chart_dirs.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
+        - name: "✅ Confirm chart structure"
+          debug:
+            msg: "Structure de charts trouvée à la racine"
+
+        - name: "Check Chart.yaml files"
+          stat:
+            path: "{{ item.value }}/Chart.yaml"
+          register: chart_yaml_files
+          loop: "{{ chart_paths | dict2items }}"
+
+        - name: "ℹ️ Display detected Helm charts"
+          debug:
+            msg: "Charts Helm détectés:"
+
+        - name: "✅ List valid charts"
+          debug:
+            msg: "{{ item.item.key }} ({{ item.item.value }})"
+          when: item.stat.exists
+          loop: "{{ chart_yaml_files.results }}"
+
+        - name: "❌ List charts with missing Chart.yaml"
+          debug:
+            msg: "{{ item.item.key }} - Chart.yaml manquant dans {{ item.item.value }}"
+          when: not item.stat.exists
+          loop: "{{ chart_yaml_files.results }}"
+
+    - name: "📋 Check Minikube status"
+      block:
+        - name: "Check if Minikube is running"
+          command: minikube status
+          register: minikube_status
+          failed_when: false
+          changed_when: false
+
+        - name: "✅ Display Minikube status if running"
+          block:
+            - name: "Get Minikube profile"
+              command: minikube profile
+              register: minikube_profile
+              changed_when: false
+
+            - name: "Get kubectl version"
+              command: kubectl version --client --short
+              register: kubectl_version
+              failed_when: false
+              changed_when: false
+
+            - name: "Display Minikube info"
+              debug:
+                msg:
+                  - "✅ Minikube est actif"
+                  - "Profil: {{ minikube_profile.stdout }}"
+                  - "Version kubectl: {{ kubectl_version.stdout | regex_replace('Client Version: v?(.+)', '\\1') if kubectl_version.rc == 0 else 'unknown' }}"
+          when: minikube_status.rc == 0
+
+        - name: "⚠️ Handle inactive Minikube"
+          block:
+            - name: "Warn about inactive Minikube"
+              debug:
+                msg: "⚠️ Minikube n'est pas actif"
+
+            - name: "Prompt for Minikube start"
+              pause:
+                prompt: "🚀 Démarrer Minikube maintenant ? [y/N]"
+                echo: yes
+              register: start_minikube
+              when: ansible_connection == "local"
+
+            - name: "Start Minikube if requested"
+              command: >
+                minikube start
+                --driver={{ minikube_config.driver }}
+                --memory={{ minikube_config.memory }}
+                --cpus={{ minikube_config.cpus }}
+              when: 
+                - ansible_connection == "local"
+                - start_minikube.user_input | lower in ['y', 'yes']
+              register: minikube_start_result
+
+            - name: "✅ Confirm Minikube started"
+              debug:
+                msg: "✅ Minikube démarré!"
+              when: minikube_start_result is defined and minikube_start_result.rc == 0
+
+            - name: "ℹ️ Note about manual start"
+              debug:
+                msg: "ℹ️ Minikube restera inactif (vous pourrez le démarrer plus tard)"
+              when: start_minikube.user_input | default('n') | lower not in ['y', 'yes']
+          when: minikube_status.rc != 0
+
+    - name: "📋 Setup GitHub configuration"
+      block:
+        - name: "Check if .git directory exists"
+          stat:
+            path: ".git"
+          register: git_dir
+
+        - name: "Auto-detect GitHub repository"
+          block:
+            - name: "Get remote origin URL"
+              command: git remote get-url origin
+              register: git_remote_url
+              failed_when: false
+              changed_when: false
+
+            - name: "Extract GitHub owner and repo"
+              set_fact:
+                auto_owner: "{{ git_remote_url.stdout | regex_replace('.*github\\.com[:/]([^/]+)/([^/.]+).*', '\\1') }}"
+                auto_repo: "{{ git_remote_url.stdout | regex_replace('.*github\\.com[:/]([^/]+)/([^/.]+).*', '\\2') }}"
+              when: 
+                - git_remote_url.rc == 0
+                - "'github.com' in git_remote_url.stdout"
+
+            - name: "✅ Display detected repository"
+              debug:
+                msg: "✅ Repo détecté automatiquement: {{ auto_owner }}/{{ auto_repo }}"
+              when: auto_owner is defined and auto_repo is defined
+
+            - name: "Update Ansible config file"
+              replace:
+                path: "ansible/ansible-minikube-config.yml"
+                regexp: "{{ item.pattern }}"
+                replace: "{{ item.replacement }}"
+              loop:
+                - { pattern: "VOTRE_USERNAME", replacement: "{{ auto_owner }}" }
+                - { pattern: "ansible-lab", replacement: "{{ auto_repo }}" }
+              when: 
+                - auto_owner is defined 
+                - auto_repo is defined
+              ignore_errors: yes
+
+            - name: "✅ Config updated automatically"
+              debug:
+                msg: "✅ Configuration mise à jour automatiquement"
+              when: auto_owner is defined and auto_repo is defined
+
+            - name: "⚠️ Warn about repository detection"
+              debug:
+                msg: "⚠️ Impossible de détecter le repo GitHub depuis l'URL Git"
+              when: auto_owner is not defined or auto_repo is not defined
+          when: git_dir.stat.exists
+
+        - name: "⚠️ No Git repository detected"
+          debug:
+            msg: "⚠️ Pas de repo Git détecté"
+          when: not git_dir.stat.exists
+
+        - name: "Check GitHub PAT configuration"
+          block:
+            - name: "Check if GITHUB_PAT is set"
+              debug:
+                msg: "✅ Token GitHub détecté"
+              when: ansible_env.GITHUB_PAT is defined
+
+            - name: "⚠️ Warn about missing GITHUB_PAT"
+              debug:
+                msg:
+                  - "⚠️ Variable GITHUB_PAT non définie"
+                  - "Pour configurer le token GitHub:"
+                  - "  1. Allez sur https://github.com/settings/tokens"
+                  - "  2. Créez un token avec scopes: repo, workflow"
+                  - "  3. Exportez-le: export GITHUB_PAT='your_token_here'"
+              when: ansible_env.GITHUB_PAT is not defined
+
+    - name: "📋 Create workflow files"
+      block:
+        - name: "Create .github/workflows directory"
+          file:
+            path: ".github/workflows"
+            state: directory
+            mode: '0755'
+
+        - name: "Check for existing CI workflow"
+          stat:
+            path: ".github/workflows/helm-full-check.yml"
+          register: ci_workflow_file
+
+        - name: "✅ CI workflow status"
+          debug:
+            msg: "✅ Workflow CI déjà présent"
+          when: ci_workflow_file.stat.exists
+
+        - name: "⚠️ Missing CI workflow"
+          debug:
+            msg:
+              - "⚠️ Workflow CI manquant"
+              - "ℹ️ Copiez le contenu du workflow helm-full-check.yml dans .github/workflows/"
+          when: not ci_workflow_file.stat.exists
+
+        - name: "Check for helm-check workflow"
+          stat:
+            path: ".github/workflows/helm-check.yml"
+          register: helm_check_workflow
+
+        - name: "ℹ️ Additional workflow info"
+          debug:
+            msg: "ℹ️ Workflow helm-check.yml également présent"
+          when: helm_check_workflow.stat.exists
+
+    - name: "📋 Test CI trigger"
+      block:
+        - name: "Check if CI trigger playbook exists"
+          stat:
+            path: "ansible/minikube-ci-trigger.yml"
+          register: ci_trigger_playbook
+
+        - name: "Test playbook in dry-run mode"
+          command: ansible-playbook ansible/minikube-ci-trigger.yml --check -v
+          register: playbook_test
+          failed_when: false
+          changed_when: false
+          when: ci_trigger_playbook.stat.exists
+
+        - name: "✅ Playbook validation result"
+          debug:
+            msg: "✅ Playbook Ansible validé"
+          when: 
+            - ci_trigger_playbook.stat.exists
+            - playbook_test.rc == 0
+
+        - name: "⚠️ Playbook needs adjustments"
+          debug:
+            msg: "⚠️ Playbook nécessite des ajustements (normal en dry-run)"
+          when: 
+            - ci_trigger_playbook.stat.exists
+            - playbook_test.rc != 0
+
+        - name: "⚠️ Missing CI trigger playbook"
+          debug:
+            msg: "⚠️ Playbook minikube-ci-trigger.yml non trouvé"
+          when: not ci_trigger_playbook.stat.exists
+
+    - name: "🎯 Display next steps"
+      debug:
+        msg:
+          - ""
+          - "🎯 Pour déclencher le CI:"
+          - "  # Méthode recommandée: Playbook Ansible"
+          - "  ansible-playbook ansible/minikube-ci-trigger.yml -e check_type=full"
+          - ""
+          - "  # Autres options de vérification:"
+          - "  ansible-playbook ansible/minikube-ci-trigger.yml -e check_type=security-only"
+          - "  ansible-playbook ansible/minikube-ci-trigger.yml -e check_type=lint-only"
+          - ""
+          - "🔍 Types de vérification disponibles:"
+          - "  - full          : Validation complète (recommandé)"
+          - "  - security-only : Audit sécurité uniquement"
+          - "  - lint-only     : Lint YAML uniquement"
+          - ""
+          - "📦 Charts qui seront validés:"
+          - "  - bind9 (DNS)"
+          - "  - mysql + phpmyadmin (Database)"
+          - "  - email (Mail server)"
+          - "  - monitoring (Prometheus + Grafana)"
+          - "  - unbound (DNS resolver)"
+          - "  - web-apache + web-nginx (Web servers)"
+          - ""
+          - "📋 Workflow du projet:"
+          - "  1. 🔍 CI validation (GitHub Actions) ← Vous êtes ici"
+          - "  2. ✅ Si OK → Prêt pour déploiement manuel"
+          - "  3. 🚀 Déploiement sur Minikube (manuel pour l'instant)"
+          - "  4. 📊 Monitoring des services"
+
+    - name: "🌐 Display useful links"
+      debug:
+        msg:
+          - "🌐 Liens utiles:"
+          - "  - Actions GitHub: https://github.com/{{ auto_owner }}/{{ auto_repo }}/actions"
+          - "  - Dashboard Minikube: minikube dashboard"
+          - "  - Logs Kubectl: kubectl logs -f deployment/{service}"
+      when: auto_owner is defined and auto_repo is defined
+
+    - name: "🎉 Setup completed"
+      debug:
+        msg:
+          - "🎉 Setup terminé!"
+          - "Vous pouvez maintenant déclencher votre CI Helm Charts!"
+          - ""
+          - "Commande rapide:"
+          - "export GITHUB_PAT='your_token' && ansible-playbook ansible/minikube-ci-trigger.yml -e check_type=full"

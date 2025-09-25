@@ -44,7 +44,7 @@ mailserver:
   # Comptes email supplémentaires (optionnel)
   # Chaque ligne suit le format : adresse|{PLAIN}motdepasse
   extraAccounts: |
-    # jojo@mail.local|{PLAIN}jojo
+
     # bob@mail.local|{PLAIN}motdepasseBob
   
   # Alias email
