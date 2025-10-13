@@ -1,0 +1,235 @@
+---
+- name: Prepare VMs for Kubernetes
+  hosts: all
+  become: yes
+  tasks:
+    # Étape 1 : Mise à jour du système et installation des outils de base
+    - name: Update apt cache and upgrade system
+      ansible.builtin.apt:
+        update_cache: yes
+        upgrade: dist
+        cache_valid_time: 3600
+      register: apt_update
+      retries: 3
+      delay: 5
+      until: apt_update is success
+
+    - name: Install basic tools
+      ansible.builtin.apt:
+        name:
+          - curl
+          - wget
+          - gnupg2
+          - lsb-release
+          - software-properties-common
+          - apt-transport-https
+          - ca-certificates
+          - vim
+          - git
+          - net-tools
+          - htop
+        state: present
+
+    # Étape 2 : Installation de Docker
+    - name: Check if Docker GPG key exists
+      ansible.builtin.stat:
+        path: /usr/share/keyrings/docker-archive-keyring.gpg
+      register: docker_gpg_key
+
+    - name: Add Docker GPG key
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        keyring: /usr/share/keyrings/docker-archive-keyring.gpg
+        state: present
+      when: not docker_gpg_key.stat.exists
+
+    - name: Add Docker repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian {{ ansible_lsb.codename }} stable"
+        state: present
+        filename: docker
+        update_cache: yes
+
+    - name: Install Docker packages
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+
+    - name: Create Docker configuration directory
+      ansible.builtin.file:
+        path: /etc/docker
+        state: directory
+        mode: '0755'
+
+    - name: Configure Docker daemon
+      ansible.builtin.copy:
+        content: |
+          {
+            "exec-opts": ["native.cgroupdriver=systemd"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "100m"
+            },
+            "storage-driver": "overlay2"
+          }
+        dest: /etc/docker/daemon.json
+        mode: '0644'
+      notify: Restart Docker
+
+    - name: Add user jojo to docker group
+      ansible.builtin.user:
+        name: jojo
+        groups: docker
+        append: yes
+
+    - name: Ensure Docker service is running and enabled
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    # Étape 3 : Installation de Kubernetes
+    - name: Check if Kubernetes GPG key exists
+      ansible.builtin.stat:
+        path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      register: k8s_gpg_key
+
+    - name: Add Kubernetes GPG key
+      ansible.builtin.apt_key:
+        url: https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key
+        keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        state: present
+      when: not k8s_gpg_key.stat.exists
+
+    - name: Add Kubernetes repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /"
+        state: present
+        filename: kubernetes
+        update_cache: yes
+
+    - name: Install Kubernetes packages
+      ansible.builtin.apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+
+    - name: Hold Kubernetes packages to prevent updates
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+
+    # Étape 4 : Configuration système pour Kubernetes
+    - name: Disable swap
+      ansible.builtin.command: swapoff -a
+      changed_when: false
+      when: ansible_swaptotal_mb > 0
+
+    - name: Comment out swap entries in /etc/fstab
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        regexp: '^([^#].*?\sswap\s)'
+        line: '#\1'
+        backrefs: yes
+
+    - name: Load kernel modules
+      ansible.builtin.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: Persist kernel modules
+      ansible.builtin.copy:
+        content: |
+          overlay
+          br_netfilter
+        dest: /etc/modules-load.d/k8s.conf
+        mode: '0644'
+
+    - name: Configure sysctl parameters for Kubernetes
+      ansible.builtin.copy:
+        content: |
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.bridge.bridge-nf-call-iptables = 1
+          net.ipv4.ip_forward = 1
+        dest: /etc/sysctl.d/k8s.conf
+        mode: '0644'
+      notify: Apply sysctl
+
+    # Étape 5 : Configuration de containerd
+    - name: Create containerd configuration directory
+      ansible.builtin.file:
+        path: /etc/containerd
+        state: directory
+        mode: '0755'
+
+    - name: Check if containerd config exists
+      ansible.builtin.stat:
+        path: /etc/containerd/config.toml
+      register: containerd_config
+
+    - name: Generate default containerd configuration
+      ansible.builtin.command: containerd config default > /etc/containerd/config.toml
+      changed_when: false
+      when: not containerd_config.stat.exists
+
+    - name: Enable SystemdCgroup in containerd configuration
+      ansible.builtin.replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
+      notify: Restart containerd
+
+    - name: Ensure containerd service is running and enabled
+      ansible.builtin.systemd:
+        name: containerd
+        state: started
+        enabled: yes
+
+    # Étape 6 : Installation de Helm
+    - name: Check if Helm is installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/helm
+      register: helm_binary
+
+    - name: Download and install Helm
+      ansible.builtin.shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      when: not helm_binary.stat.exists
+      changed_when: true
+
+    - name: Verify Helm installation
+      ansible.builtin.command: helm version
+      register: helm_version
+      changed_when: false
+
+    - name: Display Helm version
+      ansible.builtin.debug:
+        msg: "{{ helm_version.stdout }}"
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+    - name: Restart containerd
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted
+
+    - name: Apply sysctl
+      ansible.builtin.command: sysctl --system
+      changed_when: false

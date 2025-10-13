@@ -1,0 +1,14 @@
+apiVersion: v2
+name: mailstack
+version: 1.0.0
+appVersion: "1.0.0"
+description: Complete email stack with Docker Mailserver and Roundcube webmail
+type: application
+keywords:
+  - email
+  - mail
+  - smtp
+  - imap
+  - roundcube
+  - postfix
+  - dovecot

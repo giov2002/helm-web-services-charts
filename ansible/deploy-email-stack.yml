@@ -1,0 +1,34 @@
+---
+- name: Deploy or update email-stack Helm chart
+  hosts: smtp2
+  become: yes
+  tasks:
+    - name: Check if email-stack namespace exists
+      ansible.builtin.command: kubectl get namespace email-stack
+      environment:
+        KUBECONFIG: /home/jojo/.kube/config
+      register: namespace_check
+      changed_when: false
+      failed_when: false
+
+    - name: Create email-stack namespace
+      ansible.builtin.command: kubectl create namespace email-stack
+      environment:
+        KUBECONFIG: /home/jojo/.kube/config
+      when: namespace_check.rc != 0
+      changed_when: true
+
+    - name: Check if mailstack Helm release is installed
+      ansible.builtin.command: helm list -n email-stack --filter mailstack
+      environment:
+        KUBECONFIG: /home/jojo/.kube/config
+      register: helm_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install or upgrade mailstack Helm chart
+      ansible.builtin.command: helm upgrade --install mailstack /home/jojo/helm-web-services-charts/mail -n email-stack --values /home/jojo/helm-web-services-charts/mail/values.yaml
+      environment:
+        KUBECONFIG: /home/jojo/.kube/config
+      when: helm_check.rc != 0 or 'mailstack' not in helm_check.stdout
+      changed_when: true

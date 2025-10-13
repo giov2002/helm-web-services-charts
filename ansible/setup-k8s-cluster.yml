@@ -1,0 +1,89 @@
+---
+- name: Initialize Kubernetes cluster on control plane node (smtp2)
+  hosts: smtp2
+  become: yes
+  tasks:
+    - name: Check if Kubernetes cluster is already initialized
+      ansible.builtin.stat:
+        path: /etc/kubernetes/admin.conf
+      register: kube_admin_conf
+
+    - name: Initialize Kubernetes cluster
+      ansible.builtin.command: kubeadm init --pod-network-cidr=10.244.0.0/16 --apiserver-advertise-address=197.158.77.60
+      when: not kube_admin_conf.stat.exists
+      register: kubeadm_init
+      changed_when: kubeadm_init.rc == 0
+      failed_when: kubeadm_init.rc != 0
+
+    - name: Create kube config directory
+      ansible.builtin.file:
+        path: /home/jojo/.kube
+        state: directory
+        owner: jojo
+        group: jojo
+        mode: '0755'
+
+    - name: Copy admin.conf to user kube config
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/jojo/.kube/config
+        owner: jojo
+        group: jojo
+        mode: '0644'
+        remote_src: yes
+      when: kube_admin_conf.stat.exists or kubeadm_init.changed
+
+    - name: Check if Flannel is already installed
+      ansible.builtin.command: kubectl get pods -n kube-flannel -l app=flannel
+      environment:
+        KUBECONFIG: /home/jojo/.kube/config
+      register: flannel_check
+      changed_when: false
+      failed_when: false
+      when: kube_admin_conf.stat.exists or kubeadm_init.changed
+
+    - name: Install Flannel CNI
+      ansible.builtin.command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+      environment:
+        KUBECONFIG: /home/jojo/.kube/config
+      when: flannel_check.rc != 0 or 'kube-flannel-ds' not in flannel_check.stdout
+      changed_when: true
+
+    - name: Fetch kubeadm join command
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: join_command
+      changed_when: false
+      when: kube_admin_conf.stat.exists or kubeadm_init.changed
+
+    - name: Save join command to local file
+      ansible.builtin.copy:
+        content: "{{ join_command.stdout }}"
+        dest: /home/jojo/kubeadm_join_command.txt
+        mode: '0644'
+      delegate_to: localhost
+      when: join_command.stdout is defined
+
+- name: Join worker nodes to Kubernetes cluster
+  hosts: smtp1,smtp3
+  become: yes
+  tasks:
+    - name: Check if node is already joined
+      ansible.builtin.command: kubectl get nodes {{ inventory_hostname }}
+      delegate_to: smtp2
+      environment:
+        KUBECONFIG: /home/jojo/.kube/config
+      register: node_check
+      changed_when: false
+      failed_when: false
+
+    - name: Fetch join command from local file
+      ansible.builtin.slurp:
+        src: /home/jojo/kubeadm_join_command.txt
+      register: join_command_content
+      delegate_to: localhost
+      when: node_check.rc != 0 or inventory_hostname not in node_check.stdout
+
+    - name: Join node to cluster
+      ansible.builtin.command: "{{ join_command_content.content | b64decode }}"
+      when: node_check.rc != 0 or inventory_hostname not in node_check.stdout
+      changed_when: true

@@ -1,0 +1,148 @@
+{{- if .Values.mailserver.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailserver
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "mailstack.mailserver.labels" . | nindent 4 }}
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.mailserver.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mailstack.mailserver.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mailstack.mailserver.selectorLabels" . | nindent 8 }}
+        {{- with .Values.commonLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.commonAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: mailserver
+        image: "{{ .Values.mailserver.image.repository }}:{{ .Values.mailserver.image.tag }}"
+        imagePullPolicy: {{ .Values.mailserver.image.pullPolicy }}
+        ports:
+        - name: smtp
+          containerPort: {{ .Values.mailserver.ports.smtp }}
+          protocol: TCP
+        - name: imap
+          containerPort: {{ .Values.mailserver.ports.imap }}
+          protocol: TCP
+        - name: imaps
+          containerPort: {{ .Values.mailserver.ports.imaps }}
+          protocol: TCP
+        - name: submission
+          containerPort: {{ .Values.mailserver.ports.submission }}
+          protocol: TCP
+        - name: smtps
+          containerPort: {{ .Values.mailserver.ports.smtps }}
+          protocol: TCP
+        env:
+        {{- range $key, $value := .Values.mailserver.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        volumeMounts:
+        - name: mailserver-data
+          mountPath: /var/mail
+        - name: mailserver-state
+          mountPath: /var/mail-state
+        - name: mailserver-logs
+          mountPath: /var/log/mail
+        - name: mailserver-config
+          mountPath: /tmp/docker-mailserver
+        - name: mail-accounts
+          mountPath: /tmp/docker-mailserver/postfix-accounts.cf
+          subPath: postfix-accounts.cf
+          readOnly: true
+        - name: mail-accounts
+          mountPath: /tmp/docker-mailserver/postfix-virtual.cf
+          subPath: postfix-virtual.cf
+          readOnly: true
+        - name: mail-accounts
+          mountPath: /tmp/docker-mailserver/postfix-aliases.cf
+          subPath: postfix-aliases.cf
+          readOnly: true
+        resources:
+          {{- toYaml .Values.mailserver.resources | nindent 10 }}
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+            - SYS_PTRACE
+        livenessProbe:
+          tcpSocket:
+            port: 25
+          
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+
+        readinessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - "nc -z localhost 25 && nc -z localhost 143"
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+      volumes:
+      - name: mailserver-data
+        {{- if .Values.mailserver.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: mailserver-data
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      - name: mailserver-state
+        {{- if .Values.mailserver.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: mailserver-state
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      - name: mailserver-logs
+        {{- if .Values.mailserver.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: mailserver-logs
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      - name: mailserver-config
+        {{- if .Values.mailserver.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: mailserver-config
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      - name: mail-accounts
+        secret:
+          secretName: mail-accounts
+{{- end }}
