@@ -1,0 +1,190 @@
+name: CI for Mail Chart
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'mail/**'
+      - 'ansible/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'mail/**'
+      - 'ansible/**'
+  workflow_dispatch:
+    inputs:
+      check_type:
+        description: 'Type de vérification'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - lint-only
+          - security-only
+
+env:
+  REGISTRY: ghcr.io
+  NAMESPACE_PREFIX: prod
+
+jobs:
+  detect-changes:
+    name: 🔍 Détection des Changements
+    runs-on: ubuntu-latest
+    outputs:
+      mail_changed: ${{ steps.changes.outputs.mail }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 🔍 Vérifier l'existence du dossier mail
+        run: |
+          if [ ! -d "mail" ]; then
+            echo "❌ Erreur : Dossier mail manquant"
+            exit 1
+          fi
+          echo "✅ Dossier mail existe"
+      - name: 🔍 Détecter les changements dans mail
+        id: changes
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch origin "${{ github.base_ref }}" --no-tags
+            diff_base="${{ github.base_ref }}"
+          else
+            diff_base="HEAD~1"
+          fi
+          if git diff --name-only "$diff_base" | grep -q "^mail/"; then
+            echo "mail=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Changements détectés dans mail"
+          else
+            echo "mail=false" >> "$GITHUB_OUTPUT"
+            echo "⏸️ Aucun changement dans mail"
+          fi
+
+  validate-chart:
+    name: 🧪 Validation du Chart Mail
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.mail_changed == 'true' && (github.event.inputs.check_type == 'full' || github.event.inputs.check_type == 'lint-only' || github.event_name != 'workflow_dispatch') }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: ⚙️ Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.19.0'
+      - name: 🔍 Validation du chart mail
+        run: |
+          echo "🔍 Validation de mail"
+          helm lint ./mail --strict || { echo "❌ Erreurs de lint dans mail"; exit 1; }
+          echo "✅ Chart mail validé"
+
+  security-audit:
+    name: 🔒 Audit de Sécurité
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.mail_changed == 'true' && (github.event.inputs.check_type == 'full' || github.event.inputs.check_type == 'security-only' || github.event_name != 'workflow_dispatch') }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 🔒 Audit de sécurité pour mail
+        run: |
+          echo "🔒 Audit de sécurité: mail"
+          security_issues=0
+          if grep -rn -E "(password|pwd|pass).*:.*['\"][^'\"]*[a-zA-Z0-9]{3,}[^'\"]*['\"]" "mail/" --include="*.yaml" --include="*.yml" | grep -v "passwordSecretRef" | grep -v "{{ .*password" | grep -v "#.*password"; then
+            echo "⚠️ Mots de passe potentiellement en dur détectés!"
+            security_issues=$((security_issues + 1))
+          else
+            echo "✅ Pas de mots de passe en dur détectés"
+          fi
+          if grep -rn -E "(privileged|runAsRoot|allowPrivilegeEscalation).*true" "mail/" --include="*.yaml"; then
+            echo "⚠️ Privilèges élevés détectés!"
+            security_issues=$((security_issues + 1))
+          else
+            echo "✅ Pas de privilèges élevés détectés"
+          fi
+          if grep -rn -E "image:.*latest" "mail/" --include="*.yaml" | grep -v "{{"; then
+            echo "⚠️ Images avec tag 'latest' détectées!"
+            security_issues=$((security_issues + 1))
+          else
+            echo "✅ Pas d'images avec tag 'latest'"
+          fi
+          if [ $security_issues -eq 0 ]; then
+            echo "✅ Audit sécurité OK"
+          else
+            echo "⚠️ $security_issues issues de sécurité détectées"
+            exit 1
+          fi
+
+  package-chart:
+    name: 📦 Package du Chart Mail
+    runs-on: ubuntu-latest
+    needs: [validate-chart, security-audit]
+    if: ${{ needs.detect-changes.outputs.mail_changed == 'true' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: ⚙️ Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.19.0'
+      - name: 📦 Package le chart mail
+        run: |
+          mkdir -p artifacts
+          helm package ./mail --destination artifacts/ || { echo "❌ Échec du packaging pour mail"; exit 1; }
+          echo "📦 Chart mail packagé"
+      - name: 📤 Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-charts
+          path: artifacts/*.tgz
+          retention-days: 7
+
+  final-report:
+    name: 📊 Rapport Final
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate-chart, security-audit, package-chart]
+    if: always()
+    steps:
+      - name: 📊 Génération du rapport
+        run: |
+          echo "📊 === RAPPORT CI ==="
+          echo "🕒 Date: $(date)"
+          echo "🌿 Branch: ${{ github.ref }}"
+          echo "💾 Commit: ${{ github.sha }}"
+          echo "⚙️ Type de vérification: ${{ github.event.inputs.check_type || 'full' }}"
+          echo ""
+          echo "📋 === RÉSULTATS ==="
+          if [[ "${{ needs.detect-changes.result }}" == "success" ]]; then
+            echo "✅ Détection des changements: SUCCÈS"
+          else
+            echo "❌ Détection des changements: ÉCHEC"
+          fi
+          if [[ "${{ needs.validate-chart.result }}" == "success" ]]; then
+            echo "✅ Validation Chart: SUCCÈS"
+          elif [[ "${{ needs.validate-chart.result }}" == "skipped" ]]; then
+            echo "⏸️ Validation Chart: IGNORÉ"
+          else
+            echo "❌ Validation Chart: ÉCHEC"
+          fi
+          if [[ "${{ needs.security-audit.result }}" == "success" ]]; then
+            echo "✅ Audit Sécurité: SUCCÈS"
+          elif [[ "${{ needs.security-audit.result }}" == "skipped" ]]; then
+            echo "⏸️ Audit Sécurité: IGNORÉ"
+          else
+            echo "❌ Audit Sécurité: ÉCHEC"
+          fi
+          if [[ "${{ needs.package-chart.result }}" == "success" ]]; then
+            echo "✅ Packaging Chart: SUCCÈS"
+          elif [[ "${{ needs.package-chart.result }}" == "skipped" ]]; then
+            echo "⏸️ Packaging Chart: IGNORÉ"
+          else
+            echo "❌ Packaging Chart: ÉCHEC"
+          fi
+          echo ""
+          echo "🎯 === CONCLUSION ==="
+          if [[ "${{ needs.validate-chart.result }}" == "success" && "${{ needs.security-audit.result }}" == "success" ]]; then
+            echo "🎉 SUCCÈS: Chart mail validé et prêt pour déploiement !"
+          else
+            echo "❌ ÉCHEC: Révision nécessaire avant déploiement"
+            exit 1
+          fi

@@ -1,0 +1,42 @@
+---
+- name: Join worker nodes to Kubernetes cluster
+  hosts: smtp1,smtp3
+  become: yes
+  tasks:
+    - name: Check if node is already joined
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf
+
+    - name: Copy join command from control machine
+      ansible.builtin.copy:
+        src: ./k8s-join-command.sh
+        dest: /tmp/k8s-join-command.sh
+        mode: '0755'
+      when: not kubelet_conf.stat.exists
+
+    - name: Join the cluster
+      ansible.builtin.command: sh /tmp/k8s-join-command.sh
+      when: not kubelet_conf.stat.exists
+      register: join_result
+      changed_when: true
+
+    - name: Display join result
+      ansible.builtin.debug:
+        msg: "{{ join_result.stdout }}"
+      when: join_result is not skipped
+
+    - name: Wait for node to be ready
+      ansible.builtin.shell: |
+        kubectl get node {{ inventory_hostname }} --no-headers
+      environment:
+        KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+      delegate_to: smtp2
+      become_user: "{{ ansible_user }}"
+      register: node_status
+      until: "'Ready' in node_status.stdout"
+      retries: 30
+      delay: 10
+      changed_when: false
+      when: not kubelet_conf.stat.exists
+      ignore_errors: yes

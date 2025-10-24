@@ -2,16 +2,14 @@
 - name: Ping all Kubernetes nodes
   hosts: all
   gather_facts: yes
-  become: yes
   tasks:
     - name: Test connectivity to nodes
       ansible.builtin.ping:
-      register: ping_result
 
     - name: Display node information
       ansible.builtin.debug:
         msg: |
           Node: {{ inventory_hostname }}
-          IP: {{ ansible_default_ipv4.address }}
-          Status: {{ 'SUCCESS' if ping_result is succeeded else 'FAILED' }}
+          IP: {{ ansible_host }}
+          Status: SUCCESS
           OS: {{ ansible_distribution }} {{ ansible_distribution_version }}

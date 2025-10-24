@@ -1,0 +1,360 @@
+---
+- name: Setup CI Minikube + Helm Project
+  hosts: localhost
+  gather_facts: yes
+  vars:
+    project_name: "helm-web-services-charts"
+    charts_path: ".."
+    project_root: "{{ playbook_dir | dirname }}"
+    required_tools:
+      - docker
+      - minikube
+      - kubectl
+      - helm
+      - ansible
+      - git
+      - curl
+      - jq
+    expected_charts:
+      - bind9
+      - database
+      - email
+      - monitoring
+      - unbound
+      - web-apache
+      - web-nginx
+    chart_paths:
+      bind9: "bind9"
+      mysql: "database/mysql"
+      phpmyadmin: "database/phpmyadmin"
+      email: "email"
+      monitoring: "monitoring/monitoring-chart"
+      unbound: "unbound"
+      web-apache: "web-apache"
+      web-nginx: "web-nginx"
+  
+  pre_tasks:
+    - name: Print header
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          🚀 SETUP CI MINIKUBE + HELM PROJECT
+          ========================================
+      
+    - name: Check OS compatibility
+      ansible.builtin.fail:
+        msg: "This playbook is optimized for Debian 12"
+      when: ansible_distribution != "Debian" or ansible_distribution_major_version != "12"
+      ignore_errors: yes
+    
+    - name: Print OS info
+      ansible.builtin.debug:
+        msg: "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+  
+  tasks:
+    # Check Prerequisites
+    - name: Check prerequisites
+      block:
+        - name: Check if required tools are installed
+          ansible.builtin.shell: "command -v {{ item }}"
+          register: tool_check
+          loop: "{{ required_tools }}"
+          failed_when: false
+          changed_when: false
+        
+        - name: Display installed tools
+          ansible.builtin.debug:
+            msg: "✅ {{ item.item }} found: {{ item.stdout }}"
+          loop: "{{ tool_check.results }}"
+          when: item.rc == 0
+        
+        - name: Display missing tools
+          ansible.builtin.debug:
+            msg: "❌ {{ item.item }} not found"
+          loop: "{{ tool_check.results }}"
+          when: item.rc != 0
+        
+        - name: Fail if tools are missing
+          ansible.builtin.fail:
+            msg: "Missing required tools: {{ tool_check.results | selectattr('rc', 'ne', 0) | map(attribute='item') | list | join(', ') }}"
+          when: tool_check.results | selectattr('rc', 'ne', 0) | list | length > 0
+    
+    # Check Project Structure
+    - name: Check project structure
+      block:
+        - name: Verify charts directory exists
+          ansible.builtin.stat:
+            path: "{{ charts_path }}/{{ item }}"
+          register: chart_dirs
+          loop: "{{ expected_charts }}"
+        
+        - name: Display missing charts
+          ansible.builtin.debug:
+            msg: "❌ Chart missing: {{ item.item }}"
+          loop: "{{ chart_dirs.results }}"
+          when: not item.stat.exists
+        
+        - name: Fail if charts are missing
+          ansible.builtin.fail:
+            msg: "Missing charts: {{ chart_dirs.results | selectattr('stat.exists', 'equalto', false) | map(attribute='item') | list | join(', ') }}"
+          when: chart_dirs.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+        
+        - name: Print success - project structure
+          ansible.builtin.debug:
+            msg: "✅ Project structure found at root"
+        
+        - name: Validate Chart.yaml files
+          ansible.builtin.stat:
+            path: "{{ charts_path }}/{{ chart_paths[item] }}/Chart.yaml"
+          register: chart_yaml_files
+          loop: "{{ chart_paths.keys() | list }}"
+        
+        - name: Display valid charts
+          ansible.builtin.debug:
+            msg: "✅ {{ item.item }} ({{ chart_paths[item.item] }})"
+          loop: "{{ chart_yaml_files.results }}"
+          when: item.stat.exists
+        
+        - name: Display invalid charts
+          ansible.builtin.debug:
+            msg: "❌ {{ item.item }} - Chart.yaml missing in {{ chart_paths[item.item] }}"
+          loop: "{{ chart_yaml_files.results }}"
+          when: not item.stat.exists
+    
+    # Check Minikube Status
+    - name: Check Minikube status
+      block:
+        - name: Check if Minikube is running
+          ansible.builtin.shell: "minikube status"
+          register: minikube_status
+          failed_when: false
+          changed_when: false
+        
+        - name: Print Minikube active
+          ansible.builtin.debug:
+            msg: "✅ Minikube is active"
+          when: minikube_status.rc == 0
+        
+        - name: Get Minikube profile
+          ansible.builtin.shell: "minikube profile"
+          register: minikube_profile
+          when: minikube_status.rc == 0
+          changed_when: false
+        
+        - name: Print Minikube profile
+          ansible.builtin.debug:
+            msg: "ℹ️ Profile: {{ minikube_profile.stdout }}"
+          when: minikube_status.rc == 0
+        
+        - name: Get kubectl version
+          ansible.builtin.shell: "kubectl version --client --short 2>/dev/null | grep 'Client Version' | cut -d' ' -f3"
+          register: kubectl_version
+          when: minikube_status.rc == 0
+          failed_when: false
+          changed_when: false
+        
+        - name: Print kubectl version
+          ansible.builtin.debug:
+            msg: "ℹ️ kubectl version: {{ kubectl_version.stdout }}"
+          when: minikube_status.rc == 0 and kubectl_version.stdout
+        
+        - name: Minikube not active - start option
+          ansible.builtin.pause:
+            prompt: "🚀 Start Minikube now? (yes/no)"
+          register: start_minikube
+          when: minikube_status.rc != 0
+        
+        - name: Start Minikube
+          ansible.builtin.shell: "minikube start --driver=docker --memory=4096 --cpus=2"
+          when: minikube_status.rc != 0 and start_minikube.user_input | bool
+          register: minikube_start
+        
+        - name: Print Minikube started
+          ansible.builtin.debug:
+            msg: "✅ Minikube started!"
+          when: minikube_status.rc != 0 and start_minikube.user_input | bool
+    
+    # Setup GitHub Config
+    - name: Setup GitHub configuration
+      block:
+        - name: Check if .git directory exists
+          ansible.builtin.stat:
+            path: ".git"
+          register: git_dir
+        
+        - name: Get Git remote URL
+          ansible.builtin.shell: "git remote get-url origin"
+          register: git_remote
+          when: git_dir.stat.exists
+          failed_when: false
+          changed_when: false
+        
+        - name: Extract GitHub owner and repo from URL
+          ansible.builtin.set_fact:
+            github_owner: "{{ git_remote.stdout | regex_search('github\\.com[:/]([^/]+)', '\\1') | first }}"
+            github_repo: "{{ git_remote.stdout | regex_search('github\\.com[:/][^/]+/([^/.]+)', '\\1') | first }}"
+          when: git_dir.stat.exists and git_remote.rc == 0
+        
+        - name: Print repo detected
+          ansible.builtin.debug:
+            msg: "✅ Repo detected: {{ github_owner }}/{{ github_repo }}"
+          when: github_owner is defined and github_repo is defined
+        
+        - name: Update Ansible config with GitHub info
+          ansible.builtin.replace:
+            path: "ansible/ansible-minikube-config.yml"
+            regexp: "{{ item.regexp }}"
+            replace: "{{ item.replace }}"
+          loop:
+            - { regexp: 'VOTRE_USERNAME', replace: '{{ github_owner }}' }
+            - { regexp: 'ansible-lab', replace: '{{ github_repo }}' }
+          when: github_owner is defined and github_repo is defined and ansible_check_mode is false
+        
+        - name: Print config updated
+          ansible.builtin.debug:
+            msg: "✅ Configuration updated automatically"
+          when: github_owner is defined and github_repo is defined
+        
+        - name: Print warning - no git repo
+          ansible.builtin.debug:
+            msg: "⚠️ No Git repo detected"
+          when: not git_dir.stat.exists
+        
+        - name: Check GitHub PAT
+          ansible.builtin.set_fact:
+            github_pat: "{{ lookup('env', 'GITHUB_PAT') }}"
+        
+        - name: Print GitHub PAT found
+          ansible.builtin.debug:
+            msg: "✅ GitHub token detected"
+          when: github_pat
+        
+        - name: Print GitHub PAT warning
+          ansible.builtin.debug:
+            msg: |
+              ⚠️ Environment variable GITHUB_PAT not defined
+              
+              To configure GitHub token:
+              1. Go to https://github.com/settings/tokens
+              2. Create token with scopes: repo, workflow
+              3. Export it: export GITHUB_PAT='your_token_here'
+          when: not github_pat
+    
+    # Create Workflow Files
+    - name: Create workflow files
+      block:
+        - name: Create .github/workflows directory
+          ansible.builtin.file:
+            path: ".github/workflows"
+            state: directory
+            mode: '0755'
+        
+        - name: Check if helm-full-check.yml exists
+          ansible.builtin.stat:
+            path: ".github/workflows/helm-full-check.yml"
+          register: helm_full_check
+        
+        - name: Print workflow exists
+          ansible.builtin.debug:
+            msg: "✅ CI Workflow already present"
+          when: helm_full_check.stat.exists
+        
+        - name: Print workflow missing
+          ansible.builtin.debug:
+            msg: "⚠️ CI Workflow missing - Copy helm-full-check.yml to .github/workflows/"
+          when: not helm_full_check.stat.exists
+        
+        - name: Check if helm-check.yml exists
+          ansible.builtin.stat:
+            path: ".github/workflows/helm-check.yml"
+          register: helm_check
+        
+        - name: Print helm-check.yml info
+          ansible.builtin.debug:
+            msg: "ℹ️ helm-check.yml also present"
+          when: helm_check.stat.exists
+    
+    # Test CI Trigger
+    - name: Test CI trigger
+      block:
+        - name: Print test info
+          ansible.builtin.debug:
+            msg: "ℹ️ Testing in dry-run mode..."
+          when: github_pat
+        
+        - name: Check if minikube-ci-trigger.yml exists
+          ansible.builtin.stat:
+            path: "ansible/minikube-ci-trigger.yml"
+          register: ci_trigger_playbook
+        
+        - name: Validate Ansible playbook
+          ansible.builtin.shell: "ansible-playbook ansible/minikube-ci-trigger.yml --check -v"
+          register: playbook_check
+          when: ci_trigger_playbook.stat.exists and github_pat
+          failed_when: false
+          changed_when: false
+        
+        - name: Print playbook valid
+          ansible.builtin.debug:
+            msg: "✅ Ansible playbook validated"
+          when: ci_trigger_playbook.stat.exists and github_pat and playbook_check.rc == 0
+        
+        - name: Print playbook warning
+          ansible.builtin.debug:
+            msg: "⚠️ Playbook may need adjustments (normal in dry-run)"
+          when: ci_trigger_playbook.stat.exists and github_pat and playbook_check.rc != 0
+        
+        - name: Print playbook missing
+          ansible.builtin.debug:
+            msg: "⚠️ Playbook minikube-ci-trigger.yml not found"
+          when: not ci_trigger_playbook.stat.exists
+    
+    # Show Next Steps
+    - name: Show next steps
+      block:
+        - name: Print next steps header
+          ansible.builtin.debug:
+            msg: |
+              📋 Next Steps
+              =============
+              
+              🎯 To trigger CI:
+                # Recommended method: Ansible Playbook
+                ansible-playbook ansible/minikube-ci-trigger.yml -e check_type=full
+              
+                # Other verification options:
+                ansible-playbook ansible/minikube-ci-trigger.yml -e check_type=security-only
+                ansible-playbook ansible/minikube-ci-trigger.yml -e check_type=lint-only
+              
+              🔍 Available verification types:
+                - full          : Complete validation (recommended)
+                - security-only : Security audit only
+                - lint-only     : YAML lint only
+              
+              📦 Charts that will be validated:
+                - bind9 (DNS)
+                - mysql + phpmyadmin (Database)
+                - email (Mail server)
+                - monitoring (Prometheus + Grafana)
+                - unbound (DNS resolver)
+                - web-apache + web-nginx (Web servers)
+              
+              📋 Project workflow:
+                1. 🔍 CI validation (GitHub Actions) ← You are here
+                2. ✅ If OK → Ready for manual deployment
+                3. 🚀 Deployment on Minikube (manual for now)
+                4. 📊 Service monitoring
+              
+              🌐 Useful links:
+                - Minikube dashboard: minikube dashboard
+                - Kubectl logs: kubectl logs -f deployment/{service}
+              
+              📝 Quick command:
+                export GITHUB_PAT='your_token' && ansible-playbook ansible/minikube-ci-trigger.yml -e check_type=full
+  
+  post_tasks:
+    - name: Print completion
+      ansible.builtin.debug:
+        msg: |
+          🎉 Setup completed!
+          ✅ You can now trigger your CI Helm Charts!
