@@ -1,1 +1,1 @@
-kubeadm join 197.158.77.60:6443 --token m612g2.ksox71ai6ejs4skn --discovery-token-ca-cert-hash sha256:626f080f1286494bd8d6cad43c032dba75c5169f86312677578d9e7cce0366fa 
+kubeadm join 197.158.77.60:6443 --token uv615h.zzrc56asw1jeeyg8 --discovery-token-ca-cert-hash sha256:626f080f1286494bd8d6cad43c032dba75c5169f86312677578d9e7cce0366fa 
