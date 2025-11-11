@@ -1,0 +1,53 @@
+---
+- name: Installation de Minikube sur Debian/Ubuntu
+  hosts: all
+  become: yes
+  tasks:
+
+    - name: Vérifier si Minikube est déjà installé
+      command: which minikube
+      register: minikube_check
+      ignore_errors: yes
+
+    - name: Afficher l'état de Minikube
+      debug:
+        msg: "Minikube est déjà installé : {{ minikube_check.stdout }}"
+      when: minikube_check.rc == 0
+
+    - name: Installer les dépendances nécessaires
+      apt:
+        name:
+          - curl
+          - wget
+          - apt-transport-https
+          - virtualbox
+          - virtualbox-ext-pack
+        state: present
+        update_cache: yes
+      when: minikube_check.rc != 0
+
+    - name: Télécharger le binaire Minikube
+      get_url:
+        url: https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+        dest: /tmp/minikube-linux-amd64
+        mode: '0755'
+      when: minikube_check.rc != 0
+
+    - name: Installer Minikube
+      copy:
+        src: /tmp/minikube-linux-amd64
+        dest: /usr/local/bin/minikube
+        mode: '0755'
+      when: minikube_check.rc != 0
+
+    - name: Vérifier la version de Minikube
+      command: minikube version
+      register: minikube_version
+      changed_when: false
+      when: minikube_check.rc == 0
+
+    - name: Afficher la version installée
+      debug:
+        msg: "{{ minikube_version.stdout }}"
+      when: minikube_check.rc == 0
+

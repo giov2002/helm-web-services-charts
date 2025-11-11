@@ -100,19 +100,21 @@ spec:
             command:
             - /bin/bash
             - -c
-            - "supervisorctl status"
-          initialDelaySeconds: 60
+            - "supervisorctl status | grep -E 'RUNNING|STOPPED' > /dev/null"
+          initialDelaySeconds: 120
           periodSeconds: 30
           timeoutSeconds: 10
+          failureThreshold: 5
         readinessProbe:
           exec:
             command:
             - /bin/bash
             - -c
             - "nc -z localhost 25 && nc -z localhost 143"
-          initialDelaySeconds: 30
+          initialDelaySeconds: 60
           periodSeconds: 15
           timeoutSeconds: 5
+          failureThreshold: 3
       volumes:
       - name: mailserver-data
         {{- if .Values.mailserver.persistence.enabled }}
