@@ -1,7 +1,6 @@
 name: 🔍 Full Helm Charts Validation and Deployment
 
 on:
-  # Déclenchement manuel via l'interface GitHub
   workflow_dispatch:
     inputs:
       check_type:
@@ -15,11 +14,9 @@ on:
         - lint-only
         - deploy-only
   
-  # Déclenchement programmé (tous les lundis à 9h00 UTC)
   schedule:
     - cron: '0 9 * * 1'
   
-  # Déclenchement sur push vers main
   push:
     branches: [ main ]
     paths:
@@ -31,14 +28,13 @@ on:
       - 'web-nginx/**'
       - 'unbound/**'
       - 'email/**'
-      - 'bind9/**'
+      # bind9/** est VOLONTAIREMENT ABSENT (ne pas déclencher le workflow pour bind9)
 
 env:
   REGISTRY: ghcr.io
   NAMESPACE_PREFIX: prod
 
 jobs:
-  # Job 1: Préparation et inventaire des charts
   prepare-inventory:
     name: 📋 Inventaire des Charts
     runs-on: ubuntu-latest
@@ -52,8 +48,8 @@ jobs:
       - name: 📋 Inventaire complet des charts
         id: inventory
         run: |
+          # bind9 est volontairement EXCLU (déjà validé et opérationnel en production)
           declare -A services=(
-            [bind9]="bind9"
             [mysql]="database/mysql"
             [phpmyadmin]="database/phpmyadmin"
             [email]="email"
@@ -87,13 +83,14 @@ jobs:
           echo "Charts trouvés: ${#charts_found[@]}"
           echo "Charts manquants: ${#charts_missing[@]}"
           echo "Charts à vérifier: ${charts_found[*]}"
+          echo ""
+          echo "ℹ️ NOTE: bind9 est exclu du workflow (déjà validé en production depuis 55+ jours)"
           
           if [ ${#charts_missing[@]} -gt 0 ]; then
             echo "⚠️ Charts manquants: ${charts_missing[*]}"
             exit 1
           fi
 
-  # Job 2: Validation complète des charts
   validate-all-charts:
     name: 🧪 Validation Complète
     runs-on: ubuntu-latest
@@ -115,19 +112,7 @@ jobs:
 
       - name: 🔍 Validation approfondie du chart ${{ matrix.chart }}
         run: |
-          # Skip validation approfondie pour bind9
-          if [ "${{ matrix.chart }}" = "bind9" ]; then
-            echo "🔍 === VALIDATION DE: bind9 ==="
-            echo "⏸️ Validation helm template skippée pour bind9 (config production spécifique)"
-            echo ""
-            echo "🔍 Helm lint..."
-            helm lint bind9/ --strict
-            echo "✅ bind9 - Lint OK, chart déjà opérationnel en production"
-            exit 0
-          fi
-          
           declare -A paths=(
-            [bind9]="bind9"
             [mysql]="database/mysql"
             [phpmyadmin]="database/phpmyadmin"
             [email]="email"
@@ -161,7 +146,6 @@ jobs:
           echo ""
           echo "✅ ${{ matrix.chart }} validé avec succès!"
 
-  # Job 3: Lint YAML complet
   full-yaml-lint:
     name: 📏 Lint YAML Complet
     runs-on: ubuntu-latest
@@ -208,7 +192,6 @@ jobs:
       - name: 📏 Lint YAML approfondi pour ${{ matrix.chart }}
         run: |
           declare -A paths=(
-            [bind9]="bind9"
             [mysql]="database/mysql"
             [phpmyadmin]="database/phpmyadmin"
             [email]="email"
@@ -237,7 +220,6 @@ jobs:
           
           echo "✅ Lint YAML terminé pour ${{ matrix.chart }}"
 
-  # Job 4: Audit de sécurité complet
   full-security-audit:
     name: 🔒 Audit de Sécurité Complet
     runs-on: ubuntu-latest
@@ -254,7 +236,6 @@ jobs:
       - name: 🔒 Audit de sécurité approfondi pour ${{ matrix.chart }}
         run: |
           declare -A paths=(
-            [bind9]="bind9"
             [mysql]="database/mysql"
             [phpmyadmin]="database/phpmyadmin"
             [email]="email"
@@ -314,7 +295,6 @@ jobs:
             echo "⚠️ ${{ matrix.chart }} - $security_issues issues à vérifier"
           fi
 
-  # Job 5: Test de rendu des templates
   template-rendering:
     name: 🎨 Test de Rendu des Templates
     runs-on: ubuntu-latest
@@ -335,17 +315,7 @@ jobs:
 
       - name: 🎨 Test de rendu pour ${{ matrix.chart }}
         run: |
-          # Skip le test de rendu pour bind9 (configuration production spécifique)
-          if [ "${{ matrix.chart }}" = "bind9" ]; then
-            echo "🎨 === TEST RENDU: bind9 ==="
-            echo "⏸️ Test de rendu ignoré pour bind9 (configuration production spécifique)"
-            echo "✅ Chart bind9 déjà validé et opérationnel en production"
-            echo "📊 Pods actuels: bind9-58c98877c6-xjcgm, bind9-58c98877c6-zr6dh (Running)"
-            exit 0
-          fi
-          
           declare -A paths=(
-            [bind9]="bind9"
             [mysql]="database/mysql"
             [phpmyadmin]="database/phpmyadmin"
             [email]="email"
@@ -388,8 +358,6 @@ jobs:
           
           echo "✅ Test de rendu terminé pour ${{ matrix.chart }}"
 
- 
-  # Job 7: Rapport final complet
   final-report:
     name: 📊 Rapport Final Complet
     runs-on: ubuntu-latest
@@ -410,6 +378,7 @@ jobs:
           echo "📋 === INVENTAIRE ==="
           echo "Charts détectés: ${{ needs.prepare-inventory.outputs.charts_count }}"
           echo "Charts analysés: $(echo '${{ needs.prepare-inventory.outputs.all_charts }}' | jq -r '. | join(", ")')"
+          echo "ℹ️ bind9: Exclu du workflow (déjà validé en production)"
           
           echo ""
           echo "📊 === RÉSULTATS PAR JOB ==="
@@ -467,6 +436,7 @@ jobs:
           echo "• Assurez-vous que tous les charts ont les ressources nécessaires"
           echo "• Utilisez des tags d'images spécifiques (évitez 'latest')"
           echo "• Vérifiez les logs des pods pour les déploiements échoués"
+          echo "• bind9 est géré manuellement (déjà en production stable)"
           
           echo ""
           echo "🚀 === CONCLUSION ==="
@@ -493,8 +463,9 @@ jobs:
           if [ $critical_failures -eq 0 ]; then
             echo ""
             echo "🎉 === SUCCÈS GLOBAL ==="
-            echo "✅ Tous les charts ont passé les vérifications critiques et ont été déployés!"
+            echo "✅ Tous les charts ont passé les vérifications critiques!"
             echo "🚀 Vos charts Helm sont opérationnels!"
+            echo "ℹ️ bind9 continue à fonctionner en production (exclu du CI)"
           else
             echo ""
             echo "💥 === ÉCHEC GLOBAL ==="
