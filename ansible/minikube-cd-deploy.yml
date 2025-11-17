@@ -103,14 +103,31 @@
           - {{ chart.name }}: {{ chart.path }} → {{ chart.namespace }}
           {% endfor %}
 
+    #- name: Create namespaces
+     # kubernetes.core.k8s:
+      #  api_version: v1
+       # kind: Namespace
+       # name: "{{ item.namespace }}"
+        #state: present
+        #definition:
+         # metadata:
+          #  labels:
+           #   app.kubernetes.io/managed-by: Helm
+            #  environment: minikube
+             # project: helm-web-services
+            #annotations:
+             # meta.helm.sh/release-name: "{{ item.name }}"
+              #meta.helm.sh/release-namespace: "{{ item.namespace }}"
+      #loop: "{{ charts }}"
+  
     - name: Create namespaces
       kubernetes.core.k8s:
-        api_version: v1
-        kind: Namespace
-        name: "{{ item.namespace }}"
         state: present
         definition:
+          apiVersion: v1
+          kind: Namespace
           metadata:
+            name: "{{ item.namespace }}"
             labels:
               app.kubernetes.io/managed-by: Helm
               environment: minikube
@@ -126,7 +143,7 @@
         chart_ref: "{{ item.path }}"
         namespace: "{{ item.namespace }}"
         state: present
-        create_namespace: true
+        create_namespace: false
         wait: true
         wait_timeout: "600s"
       loop: "{{ charts | sort(attribute='priority') }}"
