@@ -7,18 +7,18 @@ metadata:
     {{- include "bind9.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
-  strategy:
+   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxUnavailable: 1
       maxSurge: 1
   selector:
     matchLabels:
-{{ include "bind9.selectorLabels" . | nindent 6 }}
+      {{- include "bind9.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-{{ include "bind9.selectorLabels" . | nindent 8 }}
+        {{- include "bind9.selectorLabels" . | nindent 8 }}
     spec:
       containers:
       - name: {{ .Chart.Name }}
